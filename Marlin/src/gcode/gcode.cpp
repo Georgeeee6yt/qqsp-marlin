@@ -38,6 +38,7 @@ GcodeSuite gcode;
 
 #if ENABLED(QQS_UI)
   #include "../lcd/tft/qqs/qqs_motion.h"
+  #include "../lcd/tft/qqs/qqs_tools.h"
 #endif
 
 #if ENABLED(PRINTCOUNTER)
@@ -1154,6 +1155,9 @@ void GcodeSuite::process_parsed_command(const bool no_ok/*=false*/) {
         case 2000: qqs_M2000(); break;                            // M2000: QQS-Pro pause and park
         case 2001: qqs_M2001(); break;                            // M2001: QQS-Pro resume from M2000
         case 2002: qqs_M2002(); break;                            // M2002: QQS-Pro safe lift + centre before homing
+        case 2003: qqs_M2003(); break;                            // M2003: QQS-Pro first-layer offset
+        case 2005: qqs_M2005(); break;                            // M2005: QQS-Pro endstop repeatability test
+        case 2006: qqs_M2006(); break;                            // M2006: QQS-Pro manual calibration moves
         case 2010: qqs_M2010(); break;                            // M2010: QQS-Pro animation timing
       #endif
 

@@ -11,6 +11,8 @@
 
 #include "qqs_ui.h"
 #include "qqs_draw.h"
+#include "qqs_ui_priv.h"
+#include "qqs_tools.h"
 #include "qqs_settings.h"
 #include "../tft.h"
 #include "../touch.h"
@@ -66,13 +68,12 @@ namespace qqs {
   static bool  job_was_running = false;
   static bool  stopping = false;      // stop confirmed, waiting for the job to end
 
-  static inline void redraw() { ui.refresh(LCDVIEW_REDRAW_NOW); }
 
   // For screens with live values / background logic. Marlin only calls a screen handler while
   // lcdDrawUpdate != NONE, and clears REDRAW_NOW after the handler returns, so a handler must
   // keep itself alive (CALL_NO_REDRAW) and ask for its periodic redraw with CALL_REDRAW_NEXT.
   // Returns whether this call should draw.
-  static bool live(millis_t &next_ms, const uint16_t period) {
+  bool live(millis_t &next_ms, const uint16_t period) {
     const bool draw = ui.should_draw();
     const millis_t now = millis();
     const bool tick = ELAPSED(now, next_ms);
@@ -80,11 +81,10 @@ namespace qqs {
     ui.refresh(tick ? LCDVIEW_CALL_REDRAW_NEXT : LCDVIEW_CALL_NO_REDRAW);
     return draw;
   }
-  static inline bool job_active() { return printJobOngoing() || card.isFileOpen(); }
   static void go_home_screen() { ui.return_to_status(); }
 
   // Inject G-code from the UI. Only one injected batch at a time (it shares Marlin's 64-byte buffer).
-  static bool run(const char *g) {
+  bool run(const char *g) {
     if (queue.injected_commands_P || queue.injected_commands[0]) {
       ui.set_status("忙碌中，請稍候");
       redraw();
@@ -95,7 +95,7 @@ namespace qqs {
   }
 
   // "12.34" / "-0.50" without printf float support
-  static char *f2(char *o, const float v) {   // o: at least 16 bytes
+  char *f2(char *o, const float v) {   // o: at least 16 bytes
     long h = lroundf(v * 100.0f);
     const bool neg = h < 0;
     if (neg) h = -h;
@@ -810,19 +810,20 @@ namespace qqs {
   // =========================================================================
 
   static void set_save() { ui.set_status(settings.save() ? "已存檔" : "存檔失敗"); redraw(); }
-  static void go_settings() { ui.goto_screen(settings_screen); }
+  void go_settings() { ui.goto_screen(settings_screen); }
 
   static void info_screen() {
     if (!ui.should_draw()) return;
     touch.clear();
     header("機器資訊", go_settings);
-    canvas(0, HEADER_H, TFT_WIDTH, TFT_HEIGHT - HEADER_H, C_BG);
+    info_tabs(false);
+    canvas(0, HEADER_H + 32, TFT_WIDTH, TFT_HEIGHT - HEADER_H - 32, C_BG);
     char v[64], a[16], b[16], c[16];
-    int16_t y = 6;
+    int16_t y = 4;
     auto row = [&](const char *label, const char *val) {
       text(10, y, F_S, C_MUTED, C_BG, label);
       text(118, y, F_S, C_TEXT, C_BG, val);
-      y += 19;
+      y += 18;
     };
     row("韌體", "Marlin " QQS_FW_VERSION " (QQS-Pro)");
     #ifdef MKS_WIFI
@@ -836,8 +837,6 @@ namespace qqs {
     sprintf_P(v, PSTR("%s mm"), fmt_signed2(qqs_settings.layer_offset));                row("第一層偏移", v);
     sprintf_P(v, PSTR("%s"), f2(a, planner.settings.axis_steps_per_mm[E_AXIS]));       row("E 步數", v);
     sprintf_P(v, PSTR("%d mm"), int(bowden()));                                          row("Bowden 管長", v);
-    sprintf_P(v, PSTR("%d mm"), int(DELTA_PRINTABLE_RADIUS));                                  row("列印半徑", v);
-    text(10, y + 4, F_S, C_DIM, C_BG, "感測器測試在 v3.2");
   }
 
   static void reset_confirm() {
@@ -859,7 +858,7 @@ namespace qqs {
   }
 
   static void go_touch_cal() { ui.goto_screen(touch_screen_calibration); }
-  static void go_info()      { ui.goto_screen(info_screen); }
+  void go_info()             { ui.goto_screen(info_screen); }
   static void go_reset()     { ui.goto_screen(reset_screen); }
   static void go_marlin()    { ui.goto_screen(menu_main); }
 
@@ -872,10 +871,10 @@ namespace qqs {
 
     struct Tile { const qqs_bitmap_t *icon; const char *label; const char *sub; screenFunc_t cb; };
     static const Tile tiles[12] = {
-      { &qqs_i18_ruler_measure,   "手動校準", "v3.2",   nullptr },
+      { &qqs_i18_ruler_measure,   "手動校準", nullptr,  go_cal },
       { &qqs_i18_target,          "自動校準", "需探頭", nullptr },
       { &qqs_i18_grid_dots,       "自動網格", "需探頭", nullptr },
-      { &qqs_i18_arrows_vertical, "Z 偏移",   "v3.2",   nullptr },
+      { &qqs_i18_arrows_vertical, "Z 偏移",   nullptr,  go_zoff },
       { &qqs_i18_chart_line,      "PID 調整", "v3.2",   nullptr },
       { &qqs_i18_adjustments,     "機器參數", "v3.2",   nullptr },
       { &qqs_i18_toggle_right,    "功能開關", "v3.2",   nullptr },
@@ -1182,6 +1181,14 @@ namespace qqs {
 
     const bool job = job_active();
     if (job && !job_was_running) { bs_total = 0; loop_pos = 0; }   // new job
+    if (!job && job_was_running && ABS(bs_total) > 0.001f) {     // job over with Z babystepping: offer to keep it
+      const float t = bs_total;
+      bs_total = 0;
+      job_was_running = false;
+      stopping = false;
+      open_bs_prompt(t);
+      return;
+    }
     job_was_running = job;
     if (!job) stopping = false;
 

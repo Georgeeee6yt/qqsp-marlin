@@ -11,7 +11,8 @@ typedef struct __attribute__((__packed__)) {
   uint8_t soak_minutes;        // calibration: wait after reaching temperature (0-5)
   uint8_t one_way_approach;    // calibration: always finish a Z adjustment moving down
   uint8_t show_remeasure_diff; // calibration: show the difference after "re-home and measure again"
-  uint8_t reserved[8];
+  uint8_t probe_installed;     // sensor page: show the probe as installed (0 = dashed "not installed")
+  uint8_t reserved[7];
 } qqs_settings_t;
 
 extern qqs_settings_t qqs_settings;

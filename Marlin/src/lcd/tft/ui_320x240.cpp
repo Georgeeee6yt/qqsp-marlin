@@ -47,6 +47,7 @@
 
 #if ENABLED(QQS_UI)
   #include "qqs/qqs_ui.h"
+  #include "qqs/qqs_ui_priv.h"
 #endif
 
 void MarlinUI::tft_idle() {
@@ -61,6 +62,7 @@ void MarlinUI::tft_idle() {
   #endif
 
   TERN_(QQS_UI, qqs::anim_idle());
+  TERN_(QQS_UI, qqs::sensor_poll());
 
   tft.queue.async();
 
