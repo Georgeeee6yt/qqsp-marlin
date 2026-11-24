@@ -85,7 +85,7 @@ typedef struct __attribute__((__packed__)) {
 } touch_control_t;
 
 #define MAX_CONTROLS        16
-#define MINIMUM_HOLD_TIME   15
+#define MINIMUM_HOLD_TIME   TERN(QQS_UI, 30, 15)
 #define TOUCH_REPEAT_DELAY  75
 #define MIN_REPEAT_DELAY    25
 #define UBL_REPEAT_DELAY    125

@@ -60,6 +60,10 @@ TouchControlType Touch::touch_control_type = NONE;
   extern bool wait_for_user;
 #endif
 
+#if ENABLED(QQS_UI)
+  static millis_t qqs_button_quiet_until = 0;
+#endif
+
 void Touch::init() {
   TERN_(TOUCH_SCREEN_CALIBRATION, touch_calibration.calibration_reset());
   reset();
@@ -114,6 +118,15 @@ void Touch::idle() {
 
     if (time_to_hold == 0) time_to_hold = now + MINIMUM_HOLD_TIME;
     if (PENDING(now, time_to_hold)) return;
+
+    #if ENABLED(QQS_UI)
+      // QQS-Pro resistive panel: act only on a settled reading (two samples within 8 px),
+      // and ignore a new press for a moment after a button fired (contact bounce).
+      if (!current_control) {
+        if (ABS(_x - x) > 8 || ABS(_y - y) > 8) { x = _x; y = _y; return; }
+        if (PENDING(now, qqs_button_quiet_until)) { touch_time = now; x = _x; y = _y; return; }
+      }
+    #endif
 
     if (x != 0 && y != 0) {
       if (current_control) {
@@ -246,7 +259,10 @@ void Touch::touch(touch_control_t *control) {
       break;
 
     // TODO: TOUCH could receive data to pass to the callback
-    case BUTTON: ((screenFunc_t)control->data)(); break;
+    case BUTTON:
+      TERN_(QQS_UI, qqs_button_quiet_until = millis() + 350);
+      ((screenFunc_t)control->data)();
+      break;
     
     // Case light button 
     #if ENABLED(CASE_LIGHT_ENABLE)

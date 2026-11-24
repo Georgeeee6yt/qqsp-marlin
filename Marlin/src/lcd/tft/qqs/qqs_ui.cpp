@@ -472,11 +472,11 @@ namespace qqs {
   static void bc_speed()  { bc_slow = !bc_slow; redraw(); }
   static void bc_cancel() {
     if (bc_state == 1) { bc_stop(false); ui.set_status("已停止送料"); }
-    else {
-      if (bc_state == 3) queue.inject("M410\nM82");   // escape hatch if the stop never completed
-      bc_state = 0;
-      ui.goto_screen(filament_screen);
+    else if (bc_state == 3) {
+      // Normally finishes by itself; only allow leaving if the stop has hung for a while.
+      if (ELAPSED(millis(), bc_stop_ms + 6000)) { queue.inject("M410\nM82"); bc_state = 0; ui.goto_screen(filament_screen); }
     }
+    else { bc_state = 0; ui.goto_screen(filament_screen); }
   }
   static void bc_retry()  { bc_state = 0; redraw(); }
   static void bc_save() {
@@ -533,11 +533,13 @@ namespace qqs {
       text_c(0, 26, TFT_WIDTH, F_XL, C_TEXT, C_BG, buf);
       text_c(0, 86, TFT_WIDTH, F_S, bc_slow ? C_WARN : C_MUTED, C_BG,
              bc_slow ? "慢速 5 mm/s：一出料就按「出來了」" : "快速 30 mm/s：料頭快到噴頭時按「放慢」");
-      Btn c; c.label = "停止"; button(4, 170, 100, 66, c, bc_cancel);
+      const bool run_ = bc_state == 1;
+      Btn c; c.label = run_ ? "停止" : "停止中…"; c.enabled = run_; button(4, 170, 84, 66, c, bc_cancel);
       Btn sp; sp.icon = bc_slow ? &qqs_i28_chevrons_down : &qqs_i28_player_pause; sp.label = bc_slow ? "加快" : "放慢";
+      sp.enabled = run_;
       if (!bc_slow) { sp.fg = C_WARN; sp.border = C_WARN; }
-      button(108, 170, 100, 66, sp, bc_speed);
-      Btn b; b.icon = &qqs_i28_check; b.label = "出來了！"; b.fg = C_OK; b.border = C_OK;
+      button(100, 170, 104, 66, sp, bc_speed);
+      Btn b; b.icon = &qqs_i28_check; b.label = "出來了！"; b.fg = C_OK; b.border = C_OK; b.enabled = run_;
       button(212, 170, 104, 66, b, bc_out);
     }
     else {
