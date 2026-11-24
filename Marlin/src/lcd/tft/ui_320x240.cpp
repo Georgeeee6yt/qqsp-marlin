@@ -217,6 +217,23 @@ void draw_fan_status(uint16_t x, uint16_t y, const bool blink) {
   tft.add_text(tft_string.center(64) + 6, 72, COLOR_FAN, tft_string);
 }
 
+#if ENABLED(SDSUPPORT)
+  /**
+   * QQS-Pro has no SD card-detect pin, so Marlin can't see a card being swapped.
+   * Like the stock firmware, (re)mount the card every time the SD icon is tapped,
+   * then open the file list. Never while a file is open (printing or paused).
+   */
+  static void sd_icon_screen() {
+    if (!printingIsActive() && !card.isFileOpen()) card.mount();
+    if (card.isMounted())
+      ui.goto_screen(menu_media);
+    else {
+      ui.set_status(GET_TEXT_F(MSG_MEDIA_INIT_FAIL));
+      ui.return_to_status();
+    }
+  }
+#endif
+
 void MarlinUI::draw_status_screen() {
   const bool blink = get_blink();
 
@@ -344,8 +361,9 @@ void MarlinUI::draw_status_screen() {
   #if ENABLED(TOUCH_SCREEN)
     add_control(256, 130, menu_main, imgSettings);
     #if ENABLED(SDSUPPORT)
-      const bool cm = card.isMounted(), pa = printingIsActive();
-      add_control(0, 130, menu_media, imgSD, cm && !pa, COLOR_CONTROL_ENABLED, cm && pa ? COLOR_BUSY : COLOR_CONTROL_DISABLED);
+      // QQS-Pro: tappable whenever no print is running, mounted or not (see sd_icon_screen)
+      const bool pa = printingIsActive() || card.isFileOpen();
+      add_control(0, 130, sd_icon_screen, imgSD, !pa, COLOR_CONTROL_ENABLED, pa ? COLOR_BUSY : COLOR_CONTROL_DISABLED);
     #endif
   #endif
 }

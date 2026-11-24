@@ -192,6 +192,27 @@ void HAL_SD_MspInit(SD_HandleTypeDef *hsd) {
   void SD_LowLevel_Init() {
     uint32_t tempreg;
 
+    #ifdef STM32F1xx
+      /**
+       * QQS-Pro / MKS bootloader fix: with a card inserted, the bootloader reads it with SDIO + DMA2 Ch4
+       * before jumping to Marlin, and can leave SDIO / DMA interrupts armed with flags pending.
+       * F1 has no SDIO reset bit, so clean up by hand before the shared DMA2_Channel4_5 IRQ is enabled.
+       * DMA2 as a whole must not be reset: Ch5 belongs to the TFT (FSMC DMA).
+       */
+      __HAL_RCC_SDIO_CLK_ENABLE();
+      __HAL_RCC_DMA2_CLK_ENABLE();
+      HAL_NVIC_DisableIRQ(SDIO_IRQn);
+      HAL_NVIC_DisableIRQ(DMA2_Channel4_5_IRQn);
+      SDIO->MASK  = 0;
+      SDIO->DCTRL = 0;
+      SDIO->CMD   = 0;
+      SDIO->ICR   = 0x00C007FFU;
+      DMA2_Channel4->CCR = 0;
+      DMA2->IFCR = DMA_IFCR_CGIF4;
+      HAL_NVIC_ClearPendingIRQ(SDIO_IRQn);
+      HAL_NVIC_ClearPendingIRQ(DMA2_Channel4_5_IRQn);
+    #endif
+
     // Enable GPIO clocks
     __HAL_RCC_GPIOC_CLK_ENABLE();
     __HAL_RCC_GPIOD_CLK_ENABLE();

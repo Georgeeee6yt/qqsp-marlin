@@ -282,14 +282,19 @@ void mks_wifi_parse_packet(ESP_PROTOC_FRAME *packet){
 				char gcode_cmd[50];
 				uint32_t cmd_index;
 				
+				bool too_long;   // QQS-Pro: a line longer than the buffer is dropped instead of overflowing the stack
+				too_long = false;
 				cmd_index = 0;
 				memset(gcode_cmd,0,50);
 				for(uint32_t i=0; i<packet->dataLen; i++){
 					
 					if(packet->data[i] != 0x0A){
+						if(too_long) continue;
+						if(cmd_index >= sizeof(gcode_cmd)-1){ too_long = true; continue; }
 						gcode_cmd[cmd_index++] = packet->data[i];
 					}else{
-						GCodeQueue::ring_buffer.enqueue((const char *)gcode_cmd, false, MKS_WIFI_SERIAL_NUM);
+						if(!too_long) GCodeQueue::ring_buffer.enqueue((const char *)gcode_cmd, false, MKS_WIFI_SERIAL_NUM);
+						too_long = false;
 						cmd_index = 0;
 						memset(gcode_cmd,0,50);
 					}
@@ -370,11 +375,12 @@ void mks_wifi_send(uint8_t *packet, uint16_t size){
 		}
 	}
 	
+	UNUSED(timeout);
 	for( uint32_t i=0; i < (uint32_t)(size+1); i++){
-		timeout = 0xaffffff;
+		const millis_t t0 = millis();
 		while(MYSERIAL2.availableForWrite()==0){
-			--timeout;
-			if(!timeout){
+			hal.watchdog_refresh();
+			if(ELAPSED(millis(), t0 + 100)){
 				error_flag=1;
 				return;
 			};
