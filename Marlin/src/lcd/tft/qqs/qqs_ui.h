@@ -11,5 +11,5 @@ namespace qqs {
   void boot_finish(uint32_t ms_left);   // animate the bar over the remaining boot time
   void status_screen();          // called from MarlinUI::draw_status_screen()
   void anim_idle();              // called from MarlinUI::tft_idle(): printing animation tick
-  void anim_draw();              // one frame of the printing animation (also used by M2010)
+  void anim_draw(bool full);     // one frame: full = whole box, else only the moving parts (also used by M2010)
 }

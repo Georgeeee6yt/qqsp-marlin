@@ -19,6 +19,18 @@ typedef struct { uint8_t x, y, ord; } qqs_anim_pt_t;
 #define QQS_ANIM_STEAM_X1 184
 #define QQS_ANIM_STEAM_Y0 40
 #define QQS_ANIM_STEAM_Y1 55
+#define QQS_ANIM_RMAIN_X 60
+#define QQS_ANIM_RMAIN_Y 33
+#define QQS_ANIM_RMAIN_W 90
+#define QQS_ANIM_RMAIN_H 51
+#define QQS_ANIM_RSTEAM_X 171
+#define QQS_ANIM_RSTEAM_Y 40
+#define QQS_ANIM_RSTEAM_W 18
+#define QQS_ANIM_RSTEAM_H 15
+#define QQS_ANIM_RBANG_X 24
+#define QQS_ANIM_RBANG_Y 7
+#define QQS_ANIM_RBANG_W 23
+#define QQS_ANIM_RBANG_H 27
 #define QQS_ANIM_STEAM_AMP 2.086f
 #define QQS_ANIM_STEAM_PERIOD 3.873f
 
@@ -30,6 +42,9 @@ extern const qqs_bitmap_t qqs_anim_arm1_mask;
 extern const qqs_bitmap_t qqs_anim_arm1;
 extern const qqs_bitmap_t qqs_anim_arm2_mask;
 extern const qqs_bitmap_t qqs_anim_arm2;
+extern const qqs_bitmap_t qqs_anim_bg_main;
+extern const qqs_bitmap_t qqs_anim_bg_steam;
+extern const qqs_bitmap_t qqs_anim_bg_bang;
 extern const uint8_t qqs_anim_flower_lvl[];   // 1 byte per pixel, 0..15
 extern const uint8_t qqs_anim_flower_ord[];   // 1 byte per pixel, drawn when progress*254 >= value; 255 = never
 extern const qqs_anim_pt_t qqs_anim_nozzle[];

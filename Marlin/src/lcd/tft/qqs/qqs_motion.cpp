@@ -115,13 +115,16 @@ void qqs_M2002() {
  * every animation tick.
  */
 void qqs_M2010() {
-  const uint32_t t0 = micros();
-  for (uint8_t i = 0; i < 20; i++) {
-    qqs::anim_draw();
-    tft.queue.sync();
+  uint32_t us[2];
+  for (uint8_t full = 0; full < 2; full++) {
+    const uint32_t t0 = micros();
+    for (uint8_t i = 0; i < 20; i++) {
+      qqs::anim_draw(full);
+      tft.queue.sync();
+    }
+    us[full] = (micros() - t0) / 20;
   }
-  const uint32_t us = (micros() - t0) / 20;
-  SERIAL_ECHOLNPGM("QQS anim frame: ", us, " us");
+  SERIAL_ECHOLNPGM("QQS anim tick: ", us[0], " us  full: ", us[1], " us");
   ui.refresh(LCDVIEW_CLEAR_CALL_REDRAW);
 }
 

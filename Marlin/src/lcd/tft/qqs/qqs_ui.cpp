@@ -1002,62 +1002,92 @@ namespace qqs {
   static uint8_t loop_pos = 0;
   static bool print_layout = false;   // the printing screen (not home) is what's on the display
 
-  void anim_draw() {
-    // Waiting for M109/M190: she holds still (steam and "!" keep going). Painting starts with the moves.
-    const bool waiting = printingIsActive() && wait_for_heatup,
-               running = printingIsActive() && !stopping && !waiting;
-    const uint8_t p8 = loop_pos >= LOOP_DRAW ? 254 : uint8_t(uint16_t(loop_pos) * 254 / LOOP_DRAW);
+  // Layers take (ox, oy): the top-left of the canvas they are drawn into, in animation coordinates.
+  // fill() takes unsigned coordinates, so nozzle / steam must only be drawn into a canvas that contains them.
 
-    canvas(ANIM_X, ANIM_Y, QQS_ANIM_W, QQS_ANIM_H, C_BG);
-    bitmap(0, 0, qqs_anim_bg, C_ACCENT, C_BG);
-
-    // "!" marks blink off now and then
-    if ((running || waiting) && (anim_tick % 12) >= 10)
-      bitmap(QQS_ANIM_BANG_X, QQS_ANIM_BANG_Y, qqs_anim_bang_mask, C_BG, C_BG);
-
-    // Flower: every pixel whose toolpath order is reached is drawn (dark line on the orange canvas)
-    {
-      uint8_t *o = flower_buf;
-      const uint8_t *lv = qqs_anim_flower_lvl, *od = qqs_anim_flower_ord;
-      for (uint8_t y = 0; y < QQS_ANIM_FLOWER_H; y++) {
-        for (uint8_t x = 0; x < QQS_ANIM_FLOWER_W; x += 2) {
-          const uint8_t a = (*od++ <= p8) ? *lv : 0; lv++;
-          uint8_t b = 0;
-          if (x + 1 < QQS_ANIM_FLOWER_W) { b = (*od++ <= p8) ? *lv : 0; lv++; }
-          *o++ = uint8_t((a << 4) | b);
-        }
-      }
-      bitmap(QQS_ANIM_FLOWER_X, QQS_ANIM_FLOWER_Y, flower_bm, C_BG, C_ACCENT);
-    }
-
-    // Nozzle at the current end of the toolpath (blinks while printing)
-    if (p8 > 0 && p8 < 254 && (!running || !(anim_tick & 1))) {
-      int8_t i = -1;
-      for (uint8_t k = 0; k < QQS_ANIM_NOZZLE_N; k++) if (qqs_anim_nozzle[k].ord <= p8) i = k;
-      if (i >= 0) {
-        const int16_t nx = qqs_anim_nozzle[i].x - ANIM_X, ny = qqs_anim_nozzle[i].y;
-        fill(nx - 2, ny - 1, 5, 3, C_BG);
-        fill(nx - 1, ny - 2, 3, 5, C_BG);
-        fill(nx, ny, 1, 1, C_ACCENT);
+  static void anim_flower(const int16_t ox, const int16_t oy, const uint8_t p8) {
+    uint8_t *o = flower_buf;
+    const uint8_t *lv = qqs_anim_flower_lvl, *od = qqs_anim_flower_ord;
+    for (uint8_t y = 0; y < QQS_ANIM_FLOWER_H; y++) {
+      for (uint8_t x = 0; x < QQS_ANIM_FLOWER_W; x += 2) {
+        const uint8_t a = (*od++ <= p8) ? *lv : 0; lv++;
+        uint8_t b = 0;
+        if (x + 1 < QQS_ANIM_FLOWER_W) { b = (*od++ <= p8) ? *lv : 0; lv++; }
+        *o++ = uint8_t((a << 4) | b);
       }
     }
+    // dark line on the orange canvas
+    bitmap(QQS_ANIM_FLOWER_X - ox, QQS_ANIM_FLOWER_Y - oy, flower_bm, C_BG, C_ACCENT);
+  }
 
-    // Steam: two wavy lines drifting up
+  static void anim_nozzle(const int16_t ox, const int16_t oy, const uint8_t p8, const bool blink) {
+    if (!(p8 > 0 && p8 < 254) || (blink && (anim_tick & 1))) return;
+    int8_t i = -1;
+    for (uint8_t k = 0; k < QQS_ANIM_NOZZLE_N; k++) if (qqs_anim_nozzle[k].ord <= p8) i = k;
+    if (i < 0) return;
+    const int16_t nx = qqs_anim_nozzle[i].x - ox, ny = qqs_anim_nozzle[i].y - oy;
+    fill(nx - 2, ny - 1, 5, 3, C_BG);
+    fill(nx - 1, ny - 2, 3, 5, C_BG);
+    fill(nx, ny, 1, 1, C_ACCENT);
+  }
+
+  static void anim_steam(const int16_t ox, const int16_t oy) {
     for (uint8_t j = 0; j < 2; j++) {
       const float x0 = j ? QQS_ANIM_STEAM_X1 : QQS_ANIM_STEAM_X0;
       for (int16_t y = QQS_ANIM_STEAM_Y0; y < QQS_ANIM_STEAM_Y1; y++) {
         const float x = x0 + QQS_ANIM_STEAM_AMP * sinf(y / QQS_ANIM_STEAM_PERIOD + anim_tick * 1.3f + j * 0.8f);
-        fill(int16_t(x) - 1, y, 2, 1, C_ACCENT);
+        fill(int16_t(x) - 1 - ox, y - oy, 2, 1, C_ACCENT);
       }
     }
+  }
 
-    // Arm on top, swinging a little while printing
+  static void anim_arm(const int16_t ox, const int16_t oy, const uint8_t f) {
     static const qqs_bitmap_t * const arm_mask[3] = { &qqs_anim_arm0_mask, &qqs_anim_arm1_mask, &qqs_anim_arm2_mask };
     static const qqs_bitmap_t * const arm_art[3]  = { &qqs_anim_arm0, &qqs_anim_arm1, &qqs_anim_arm2 };
+    bitmap(QQS_ANIM_ARM_X - ox, QQS_ANIM_ARM_Y - oy, *arm_mask[f], C_BG, C_BG);
+    bitmap(QQS_ANIM_ARM_X - ox, QQS_ANIM_ARM_Y - oy, *arm_art[f], C_ACCENT, C_BG);
+  }
+
+  // full: the whole 214x87 box (printing screen redraw). Otherwise only the parts that move:
+  // flower + nozzle + arm, steam, and the "!" when its blink state flips (~25% of the pixels).
+  void anim_draw(const bool full) {
+    // Waiting for M109/M190: she holds still (steam and "!" keep going). Painting starts with the moves.
+    const bool waiting = printingIsActive() && wait_for_heatup,
+               running = printingIsActive() && !stopping && !waiting;
+    const uint8_t p8 = loop_pos >= LOOP_DRAW ? 254 : uint8_t(uint16_t(loop_pos) * 254 / LOOP_DRAW);
+    const bool bang_off = (running || waiting) && (anim_tick % 12) >= 10;
     static const uint8_t swing[4] = { 0, 1, 2, 1 };
     const uint8_t f = running ? swing[anim_tick & 3] : 0;
-    bitmap(QQS_ANIM_ARM_X, QQS_ANIM_ARM_Y, *arm_mask[f], C_BG, C_BG);
-    bitmap(QQS_ANIM_ARM_X, QQS_ANIM_ARM_Y, *arm_art[f], C_ACCENT, C_BG);
+    static bool last_bang_off = false;
+
+    if (full) {
+      canvas(ANIM_X, ANIM_Y, QQS_ANIM_W, QQS_ANIM_H, C_BG);
+      bitmap(0, 0, qqs_anim_bg, C_ACCENT, C_BG);
+      if (bang_off) bitmap(QQS_ANIM_BANG_X, QQS_ANIM_BANG_Y, qqs_anim_bang_mask, C_BG, C_BG);
+      anim_flower(0, 0, p8);
+      anim_nozzle(0, 0, p8, running);
+      anim_steam(0, 0);
+      anim_arm(0, 0, f);
+      last_bang_off = bang_off;
+      return;
+    }
+
+    canvas(ANIM_X + QQS_ANIM_RMAIN_X, ANIM_Y + QQS_ANIM_RMAIN_Y, QQS_ANIM_RMAIN_W, QQS_ANIM_RMAIN_H, C_BG);
+    bitmap(0, 0, qqs_anim_bg_main, C_ACCENT, C_BG);
+    anim_flower(QQS_ANIM_RMAIN_X, QQS_ANIM_RMAIN_Y, p8);
+    anim_nozzle(QQS_ANIM_RMAIN_X, QQS_ANIM_RMAIN_Y, p8, running);
+    anim_arm(QQS_ANIM_RMAIN_X, QQS_ANIM_RMAIN_Y, f);
+
+    canvas(ANIM_X + QQS_ANIM_RSTEAM_X, ANIM_Y + QQS_ANIM_RSTEAM_Y, QQS_ANIM_RSTEAM_W, QQS_ANIM_RSTEAM_H, C_BG);
+    bitmap(0, 0, qqs_anim_bg_steam, C_ACCENT, C_BG);
+    anim_steam(QQS_ANIM_RSTEAM_X, QQS_ANIM_RSTEAM_Y);
+
+    if (bang_off != last_bang_off) {
+      canvas(ANIM_X + QQS_ANIM_RBANG_X, ANIM_Y + QQS_ANIM_RBANG_Y, QQS_ANIM_RBANG_W, QQS_ANIM_RBANG_H, C_BG);
+      bitmap(0, 0, qqs_anim_bg_bang, C_ACCENT, C_BG);
+      if (bang_off) bitmap(QQS_ANIM_BANG_X - QQS_ANIM_RBANG_X, QQS_ANIM_BANG_Y - QQS_ANIM_RBANG_Y, qqs_anim_bang_mask, C_BG, C_BG);
+      last_bang_off = bang_off;
+    }
   }
 
   // Called from MarlinUI::tft_idle(): redraw just the animation box, a few times a second.
@@ -1072,7 +1102,7 @@ namespace qqs {
     next_ms = now + ANIM_TICK_MS;
     anim_tick++;
     if (printingIsActive() && !stopping && !waiting && ++loop_pos >= LOOP_DRAW + LOOP_HOLD) loop_pos = 0;  // frozen while paused / heating
-    anim_draw();
+    anim_draw(false);
   }
 
   // =========================================================================
@@ -1081,7 +1111,7 @@ namespace qqs {
 
   static void printing_screen() {
     // Animation (left) + progress (right)
-    anim_draw();
+    anim_draw(true);
     const uint8_t pct = ui.get_progress_percent();
     {
       constexpr int16_t px = QQS_ANIM_W, pw = TFT_WIDTH - QQS_ANIM_W;
