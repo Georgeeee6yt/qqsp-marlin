@@ -46,6 +46,7 @@
 // Settings stored in EEPROM
 // ---------------------------------------------------------------------------
 qqs_settings_t qqs_settings;
+uint32_t qqs_sel_size = 0;   // set by CardReader::selectByIndex
 
 void qqs_settings_reset() {
   memset(&qqs_settings, 0, sizeof(qqs_settings));
@@ -277,6 +278,202 @@ namespace qqs {
 
   static void go_stop() { if (!stopping) ui.goto_screen(stop_screen); }
 
+
+  // =========================================================================
+  // File browser (replaces Marlin's media menu)
+  // =========================================================================
+
+  #define FB_ROWS   5
+  #define FB_ROW_H  40
+  #define FB_PITCH  41
+  #define FB_LIST_W 260
+  #define FB_NAME_MAX 64
+
+  static uint16_t fb_page = 0;
+  static uint8_t fb_depth = 0;                 // folders below the root (CardReader keeps its own private)
+  static uint16_t fb_count = 0;
+  static char fb_dirname[4][24];               // titles of the folders we walked into (by depth)
+  static char fb_dos[13];  // 8.3 name of the file waiting for confirmation
+  static char fb_name[FB_NAME_MAX];            // its display name
+  static uint32_t fb_size = 0;
+
+  // Long name if it is plain ASCII (the font has no glyphs for arbitrary CJK), else the 8.3 name.
+  static void fb_display_name(char *out, const bool strip_ext) {
+    const char *src = card.longFilename;
+    bool ok = src[0] != '\0';
+    for (const char *c = src; ok && *c; c++) if (uint8_t(*c) < 0x20 || uint8_t(*c) > 0x7E) ok = false;
+    if (!ok) src = card.filename;
+    strncpy(out, src, FB_NAME_MAX - 1); out[FB_NAME_MAX - 1] = '\0';
+    if (strip_ext) {
+      char * const d = strrchr(out, '.');
+      if (d && d != out && (!strcasecmp_P(d, PSTR(".gcode")) || !strcasecmp_P(d, PSTR(".gco")) || !strcasecmp_P(d, PSTR(".g"))))
+        *d = '\0';
+    }
+  }
+
+  // Shorten s in the middle ("QQS_Ben…1h32m") until it fits w pixels. s must hold FB_NAME_MAX bytes.
+  static void fb_fit(char *s, const qqs_font_t &f, const int16_t w) {
+    if (width(f, s) <= w) return;
+    const uint8_t n = strlen(s);
+    char t[FB_NAME_MAX + 4];
+    for (uint8_t k = n - 1; k > 1; k--) {
+      const uint8_t tail = k / 3, head = k - tail;
+      memcpy(t, s, head);
+      strcpy(t + head, "…");
+      strcat(t, s + n - tail);
+      if (width(f, t) <= w) { strcpy(s, t); return; }
+    }
+    strcpy(s, "…");
+  }
+
+  static const char *fb_fmt_size(const uint32_t b) {
+    static char buf[16];
+    if (b < 1024UL * 1024UL) sprintf_P(buf, PSTR("%lu KB"), (unsigned long)((b + 1023) / 1024));
+    else {
+      const uint32_t t = (b * 10UL + 524288UL) / 1048576UL;   // tenths of a MB
+      sprintf_P(buf, PSTR("%lu.%lu MB"), (unsigned long)(t / 10), (unsigned long)(t % 10));
+    }
+    return buf;
+  }
+
+  static void files_screen();
+  static void file_confirm_screen();
+
+  static void fb_back() {
+    if (card.flag.workDirIsRoot) { ui.return_to_status(); return; }
+    card.cdup();
+    if (fb_depth) fb_depth--;
+    fb_page = 0;
+    redraw();
+  }
+  static void fb_refresh() { card.mount(); fb_page = 0; fb_depth = 0; if (card.isMounted()) ui.reset_status(); else ui.set_status("讀不到 SD 卡"); redraw(); }
+  static void fb_prev() { if (fb_page) fb_page--; redraw(); }
+  static void fb_next() { if ((fb_page + 1) * FB_ROWS < fb_count) fb_page++; redraw(); }
+
+  static void fb_tap(const uint8_t row) {
+    const uint16_t i = fb_page * FB_ROWS + row;
+    if (i >= fb_count) return;
+    card.getfilename_sorted(SD_ORDER(i, fb_count));
+    if (card.flag.filenameIsDir) {
+      const uint8_t d = fb_depth;   // depth before the cd
+      char n[FB_NAME_MAX];
+      fb_display_name(n, false);
+      fb_fit(n, F_M, 180);
+      if (d < COUNT(fb_dirname)) { strncpy(fb_dirname[d], n, sizeof(fb_dirname[0]) - 1); fb_dirname[d][sizeof(fb_dirname[0]) - 1] = '\0'; }
+      card.cd(card.filename);
+      fb_depth++;
+      fb_page = 0;
+      redraw();
+    }
+    else {
+      strncpy(fb_dos, card.filename, sizeof(fb_dos) - 1); fb_dos[sizeof(fb_dos) - 1] = '\0';
+      fb_display_name(fb_name, true);
+      fb_size = qqs_sel_size;
+      ui.goto_screen(file_confirm_screen);
+    }
+  }
+  static void fb_r0() { fb_tap(0); }
+  static void fb_r1() { fb_tap(1); }
+  static void fb_r2() { fb_tap(2); }
+  static void fb_r3() { fb_tap(3); }
+  static void fb_r4() { fb_tap(4); }
+
+  static void files_screen() {
+    if (!ui.should_draw()) return;
+    touch.clear();
+
+    const uint8_t depth = fb_depth;
+    const char *title = card.flag.workDirIsRoot ? "選擇檔案"
+                      : (depth >= 1 && depth <= COUNT(fb_dirname)) ? fb_dirname[depth - 1] : "資料夾";
+    header(title, fb_back);
+    {   // refresh, top right
+      canvas(TFT_WIDTH - 40, 0, 40, HEADER_H - 1, C_BAR);
+      bitmap((40 - qqs_i18_refresh.w) / 2, (HEADER_H - 1 - qqs_i18_refresh.h) / 2, qqs_i18_refresh, C_MUTED, C_BAR);
+      touch.add_control(BUTTON, TFT_WIDTH - 52, 0, 52, HEADER_H + 6, (intptr_t)fb_refresh);
+    }
+
+    fb_count = card.isMounted() ? card.get_num_Files() : 0;
+    const uint16_t pages = _MAX(1, (fb_count + FB_ROWS - 1) / FB_ROWS);
+    if (fb_page >= pages) fb_page = pages - 1;
+
+    constexpr int16_t y0 = HEADER_H + 2;
+    if (!fb_count) {
+      canvas(4, y0, FB_LIST_W, FB_ROWS * FB_PITCH - 1, C_BG);
+      text_c(0, 70, FB_LIST_W, F_M, C_MUTED, C_BG, card.isMounted() ? "這裡沒有檔案" : "讀不到 SD 卡");
+      text_c(0, 96, FB_LIST_W, F_S, C_DIM, C_BG, "按右上角重新讀取");
+    }
+
+    static const screenFunc_t row_cb[FB_ROWS] = { fb_r0, fb_r1, fb_r2, fb_r3, fb_r4 };
+    for (uint8_t r = 0; r < FB_ROWS && fb_count; r++) {
+      const int16_t y = y0 + r * FB_PITCH;
+      const uint16_t i = fb_page * FB_ROWS + r;
+      if (i >= fb_count) { canvas(4, y, FB_LIST_W, FB_ROW_H, C_BG); continue; }
+
+      card.getfilename_sorted(SD_ORDER(i, fb_count));
+      const bool dir = card.flag.filenameIsDir;
+      char n[FB_NAME_MAX];
+      fb_display_name(n, !dir);
+      fb_fit(n, F_M, FB_LIST_W - 40);
+
+      canvas(4, y, FB_LIST_W, FB_ROW_H, C_TILE);
+      frame(0, 0, FB_LIST_W, FB_ROW_H, C_BORDER);
+      const qqs_bitmap_t &ic = dir ? qqs_i18_folder : qqs_i18_file_3d;
+      bitmap(9, (FB_ROW_H - ic.h) / 2, ic, dir ? C_ACCENT : C_MUTED, C_TILE);
+      text(34, 1, F_M, C_TEXT, C_TILE, n);
+      text(34, 21, F_S, C_MUTED, C_TILE, dir ? "資料夾" : fb_fmt_size(qqs_sel_size));
+      touch.add_control(BUTTON, 4, y, FB_LIST_W, FB_ROW_H, (intptr_t)row_cb[r]);
+    }
+
+    // Page column on the right
+    constexpr int16_t px = 4 + FB_LIST_W + 4, pw = TFT_WIDTH - px - 4;
+    const int16_t ph = (FB_ROWS * FB_PITCH - 1 - 30) / 2;
+    Btn up; up.icon = &qqs_i28_chevron_up;   up.enabled = fb_page > 0;
+    button(px, y0, pw, ph, up, fb_prev);
+    canvas(px, y0 + ph, pw, 30, C_BG);
+    char pg[12]; sprintf_P(pg, PSTR("%u/%u"), fb_page + 1, pages);
+    text_c(0, 7, pw, F_S, C_MUTED, C_BG, pg);
+    Btn dn; dn.icon = &qqs_i28_chevron_down; dn.enabled = fb_page + 1 < pages;
+    button(px, y0 + ph + 30, pw, ph, dn, fb_next);
+  }
+
+  // ---- Confirm ----
+
+  static void fc_back()  { ui.goto_screen(files_screen); }
+  static void fc_start() {
+    card.openAndPrintFile(fb_dos);
+    ui.return_to_status();
+    ui.reset_status();
+  }
+
+  static void file_confirm_screen() {
+    if (!ui.should_draw()) return;
+    touch.clear();
+    header("開始列印", fc_back);
+
+    canvas(0, HEADER_H, TFT_WIDTH, 114, C_BG);
+    bitmap((TFT_WIDTH - qqs_i28_file_3d.w) / 2, 10, qqs_i28_file_3d, C_ACCENT, C_BG);
+
+    // Name on up to two lines
+    char l1[FB_NAME_MAX], l2[FB_NAME_MAX];
+    constexpr int16_t tw = TFT_WIDTH - 24;
+    strcpy(l1, fb_name); l2[0] = '\0';
+    if (width(F_M, l1) > tw) {
+      uint8_t k = strlen(fb_name);
+      while (k > 1) { l1[k] = '\0'; if (width(F_M, l1) <= tw) break; k--; }
+      strcpy(l2, fb_name + k);
+      fb_fit(l2, F_M, tw);
+    }
+    const int16_t ty = l2[0] ? 44 : 54;
+    text_c(0, ty, TFT_WIDTH, F_M, C_TEXT, C_BG, l1);
+    if (l2[0]) text_c(0, ty + 21, TFT_WIDTH, F_M, C_TEXT, C_BG, l2);
+    text_c(0, 92, TFT_WIDTH, F_S, C_MUTED, C_BG, fb_fmt_size(fb_size));
+
+    Btn c; c.icon = &qqs_i28_x; c.label = "取消";
+    button(4, 150, 154, 84, c, fc_back);
+    Btn s; s.icon = &qqs_i28_player_play; s.label = "開始列印"; s.fg = C_ACCENT; s.border = C_ACCENT;
+    button(162, 150, 154, 84, s, fc_start);
+  }
+
   // =========================================================================
   // Actions on the home screen
   // =========================================================================
@@ -284,7 +481,7 @@ namespace qqs {
   static void act_print() {
     // QQS-Pro has no card-detect pin: (re)mount on every tap, like the stock firmware.
     if (!job_active()) card.mount();
-    if (card.isMounted()) ui.goto_screen(menu_media);
+    if (card.isMounted()) { fb_page = 0; fb_depth = 0; ui.goto_screen(files_screen); }
     else { ui.set_status("讀不到 SD 卡"); redraw(); }
   }
   static void act_preheat() {
@@ -803,16 +1000,19 @@ namespace qqs {
   #define LOOP_DRAW 32    // 8 s at 250 ms
   #define LOOP_HOLD 8     // 2 s
   static uint8_t loop_pos = 0;
+  static bool print_layout = false;   // the printing screen (not home) is what's on the display
 
   void anim_draw() {
-    const bool running = printingIsActive() && !stopping;
+    // Waiting for M109/M190: she holds still (steam and "!" keep going). Painting starts with the moves.
+    const bool waiting = printingIsActive() && wait_for_heatup,
+               running = printingIsActive() && !stopping && !waiting;
     const uint8_t p8 = loop_pos >= LOOP_DRAW ? 254 : uint8_t(uint16_t(loop_pos) * 254 / LOOP_DRAW);
 
     canvas(ANIM_X, ANIM_Y, QQS_ANIM_W, QQS_ANIM_H, C_BG);
     bitmap(0, 0, qqs_anim_bg, C_ACCENT, C_BG);
 
     // "!" marks blink off now and then
-    if (running && (anim_tick % 12) >= 10)
+    if ((running || waiting) && (anim_tick % 12) >= 10)
       bitmap(QQS_ANIM_BANG_X, QQS_ANIM_BANG_Y, qqs_anim_bang_mask, C_BG, C_BG);
 
     // Flower: every pixel whose toolpath order is reached is drawn (dark line on the orange canvas)
@@ -865,12 +1065,13 @@ namespace qqs {
     static millis_t next_ms = 0;
     const millis_t now = millis();
     if (PENDING(now, next_ms)) return;
-    if (!ui.on_status_screen() || !(job_active() || stopping)) return;
+    if (!ui.on_status_screen() || !print_layout) return;
     if (!tft.queue.is_empty()) return;                            // previous frame still being sent
-    if (printingIsActive() && planner.movesplanned() < 3) return; // planner starving: skip a frame
+    const bool waiting = wait_for_heatup;                         // M109/M190: nothing moves, drawing is free
+    if (printingIsActive() && !waiting && planner.movesplanned() < 3) return; // planner starving (or homing): skip a frame
     next_ms = now + ANIM_TICK_MS;
     anim_tick++;
-    if (printingIsActive() && !stopping && ++loop_pos >= LOOP_DRAW + LOOP_HOLD) loop_pos = 0;  // frozen while paused
+    if (printingIsActive() && !stopping && !waiting && ++loop_pos >= LOOP_DRAW + LOOP_HOLD) loop_pos = 0;  // frozen while paused / heating
     anim_draw();
   }
 
@@ -950,12 +1151,22 @@ namespace qqs {
     touch.clear();
 
     const bool job = job_active();
-    if (job && !job_was_running) bs_total = 0;   // new job
+    if (job && !job_was_running) { bs_total = 0; loop_pos = 0; }   // new job
     job_was_running = job;
     if (!job) stopping = false;
 
+    // Home and printing share the status screen, so Marlin doesn't clear between them:
+    // wipe everything under the top bar when the layout flips, or the old one shows through the gaps.
+    const bool want_print = job || stopping;
+    static int8_t last_layout = -1;
+    if (last_layout != int8_t(want_print)) {
+      tft.fill(0, TOP_H, TFT_WIDTH, TFT_HEIGHT - TOP_H, C_BG);
+      last_layout = want_print;
+    }
+    print_layout = want_print;
+
     top_bar();
-    if (job || stopping) printing_screen(); else home_screen();
+    if (want_print) printing_screen(); else home_screen();
   }
 
 } // namespace qqs

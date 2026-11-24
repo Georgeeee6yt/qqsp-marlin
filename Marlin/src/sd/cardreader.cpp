@@ -28,6 +28,10 @@
 
 #include "cardreader.h"
 
+#if ENABLED(QQS_UI)
+  extern uint32_t qqs_sel_size;   // size of the item picked by selectFileByIndex (QQS file browser)
+#endif
+
 #include "../MarlinCore.h"
 #include "../libs/hex_print.h"
 #include "../lcd/marlinui.h"
@@ -250,6 +254,7 @@ void CardReader::selectByIndex(MediaFile dir, const uint8_t index) {
     if (is_visible_entity(p)) {
       if (cnt == index) {
         createFilename(filename, p);
+        TERN_(QQS_UI, qqs_sel_size = p.fileSize);
         return;  // 0 based index
       }
       cnt++;
