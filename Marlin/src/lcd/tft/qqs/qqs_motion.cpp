@@ -59,7 +59,7 @@ namespace qqs {
     return best < 0 ? -1 : _MAX(0.0f, best - 3);
   }
 
-  static bool segment_ok(const xyz_pos_t &a, const xyz_pos_t &b) {
+  bool segment_ok(const xyz_pos_t &a, const xyz_pos_t &b) {
     for (uint8_t k = 0; k <= 12; k++) {
       const float t = k / 12.0f;
       const xyz_pos_t p = { a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z };
@@ -91,6 +91,20 @@ void qqs_M2000() {
     pause_print(-(PAUSE_PARK_RETRACT_LENGTH), park, false, 0);
     ui.set_status("已暫停，按「繼續」接著印");
   #endif
+}
+
+void qqs_M2002() {
+  if (axes_should_home()) return;
+  planner.synchronize();
+  const float top = qqs::z_max_at(current_position.x, current_position.y);
+  if (top > current_position.z) do_blocking_move_to_z(_MIN(current_position.z + 5, top), 10);
+  const xyz_pos_t centre = { 0, 0, current_position.z };
+  if (qqs::reachable(centre) && qqs::segment_ok(current_position, centre)) {
+    destination = current_position;
+    destination.x = destination.y = 0;
+    prepare_internal_move_to_destination(50);
+    planner.synchronize();
+  }
 }
 
 void qqs_M2001() {

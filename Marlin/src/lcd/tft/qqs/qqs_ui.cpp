@@ -321,12 +321,12 @@ namespace qqs {
     if (xy) {
       // Too far? Back off along the move until it fits.
       const xyz_pos_t a = current_position;
-      if (!reachable(t)) {
+      if (!reachable(t) || !segment_ok(a, t)) {
         float lo = 0, hi = 1;
         for (uint8_t n = 0; n < 16; n++) {
           const float m = (lo + hi) * 0.5f;
           const xyz_pos_t p = { a.x + (t.x - a.x) * m, a.y + (t.y - a.y) * m, t.z };
-          if (reachable(p)) lo = m; else hi = m;
+          if (reachable(p) && segment_ok(a, p)) lo = m; else hi = m;
         }
         t.set(a.x + (t.x - a.x) * lo, a.y + (t.y - a.y) * lo, t.z);
         if (HYPOT(t.x - a.x, t.y - a.y) < 0.1f) { ui.set_status("已到邊界"); redraw(); return; }
@@ -334,6 +334,7 @@ namespace qqs {
     }
     else {
       const float zmax = z_max_at(t.x, t.y);
+      if (zmax < 0) { ui.set_status("目前位置超出範圍，先按「歸零」"); redraw(); return; }
       if (t.z > zmax) t.z = zmax;
       if (t.z < 0) t.z = 0;
       if (ABS(t.z - current_position.z) < 0.01f) { ui.set_status(t.z > 0 ? "已到頂" : "已到 Z0"); redraw(); return; }
@@ -417,6 +418,9 @@ namespace qqs {
     static float bowden() { return FILAMENT_CHANGE_FAST_LOAD_LENGTH; }
   #endif
 
+  // Fast-loading the default 730 mm into a shorter tube would ram the filament into the nozzle.
+  static bool bowden_calibrated() { return ABS(bowden() - float(FILAMENT_CHANGE_FAST_LOAD_LENGTH)) > 0.01f; }
+
   static bool noz_ready() {
     const int16_t t = thermalManager.degTargetHotend(0);
     return t >= 180 && thermalManager.wholeDegHotend(0) >= t - 5;
@@ -425,7 +429,7 @@ namespace qqs {
   static void fil_pla()  { set_noz(200); redraw(); }
   static void fil_petg() { set_noz(240); redraw(); }
   static void fil_load() {
-    if (!noz_ready()) return;
+    if (!noz_ready() || !bowden_calibrated()) return;
     char cmd[64];
     const int fast = _MAX(0, int(bowden()) - 40);
     snprintf_P(cmd, sizeof(cmd), PSTR("M83\nG1 E%d F3000\nG1 E70 F300\nM82\nM117"), fast);
@@ -580,7 +584,9 @@ namespace qqs {
     { Btn b; b.label = "PLA";  b.sub = "200°"; if (tgt == 200) { b.fg = C_ACCENT; b.border = C_ACCENT; } button(122, 36, 96, 44, b, fil_pla); }
     { Btn b; b.label = "PETG"; b.sub = "240°"; if (tgt == 240) { b.fg = C_ACCENT; b.border = C_ACCENT; } button(222, 36, 94, 44, b, fil_petg); }
 
-    { Btn b; b.icon = &qqs_i28_arrow_big_down_lines; b.label = "進料"; b.sub = ready ? nullptr : "加熱後可用"; b.enabled = ready; button(4, 86, 154, 70, b, fil_load); }
+    { Btn b; b.icon = &qqs_i28_arrow_big_down_lines; b.label = "進料";
+      const bool cal = bowden_calibrated();
+      b.sub = !cal ? "先做管長校正" : (ready ? nullptr : "加熱後可用"); b.enabled = ready && cal; button(4, 86, 154, 70, b, fil_load); }
     { Btn b; b.icon = &qqs_i28_arrow_big_up_lines;   b.label = "退料"; b.sub = ready ? nullptr : "加熱後可用"; b.enabled = ready; button(162, 86, 154, 70, b, fil_unload); }
 
     { Btn b; b.icon = &qqs_i18_chevrons_down; b.label = "擠出"; b.sub = "10 mm"; b.enabled = ready; button(4, 162, 102, 74, b, fil_extrude); }
@@ -759,7 +765,10 @@ namespace qqs {
 
   static void act_pause() {
     if (stopping || !card.isFileOpen()) return;
-    if (printingIsPaused()) { if (run("M2001")) ui.set_status("回到原位…"); }
+    if (printingIsPaused()) {
+      if (thermalManager.degTargetHotend(0) < EXTRUDE_MINTEMP) { ui.set_status("噴頭沒在加熱，先把溫度設回去"); redraw(); return; }
+      if (run("M2001")) ui.set_status("回到原位…");
+    }
     else                    { if (run("M2000")) ui.set_status("停靠中…"); }
     redraw();
   }
