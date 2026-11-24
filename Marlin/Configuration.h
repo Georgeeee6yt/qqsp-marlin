@@ -1184,7 +1184,7 @@
 #define XYZ_PULLEY_TEETH 16
 
 #define DEFAULT_XYZ_STEPS_PER_UNIT ((XYZ_FULL_STEPS_PER_ROTATION) * (XYZ_MICROSTEPS) / double(XYZ_BELT_PITCH) / double(XYZ_PULLEY_TEETH))
-#define DEFAULT_AXIS_STEPS_PER_UNIT   { DEFAULT_XYZ_STEPS_PER_UNIT, DEFAULT_XYZ_STEPS_PER_UNIT, DEFAULT_XYZ_STEPS_PER_UNIT, 367 }  // default steps per unit
+#define DEFAULT_AXIS_STEPS_PER_UNIT   { DEFAULT_XYZ_STEPS_PER_UNIT, DEFAULT_XYZ_STEPS_PER_UNIT, DEFAULT_XYZ_STEPS_PER_UNIT, 415 }  // QQS-Pro: BMG Plus 415 (stock extruder 367)
 
 /**
  * Default Max Feed Rate (linear=mm/s, rotational=°/s)
@@ -1669,7 +1669,7 @@
 // @section extruder
 
 // For direct drive extruder v9 set to true, for geared extruder set to false.
-#define INVERT_E0_DIR false // stock extruder with TMC2208 (stock MKS EXT0_INVERSE 0)
+#define INVERT_E0_DIR true  // QQS-Pro: BMG Plus installed 2026-11-24 (stock extruder was false)
 #define INVERT_E1_DIR false
 #define INVERT_E2_DIR false
 #define INVERT_E3_DIR false
