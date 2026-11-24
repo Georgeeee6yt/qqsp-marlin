@@ -926,7 +926,7 @@
   #define DELTA_DIAGONAL_ROD 280.00       // (mm)
 
   // Distance between bed and nozzle Z home position
-  #define DELTA_HEIGHT 355.72             // (mm) QQS-Pro: paper-calibrated 2026-11-24 (stock "Z max length" 372.893 includes the 17.2 mm probe)
+  #define DELTA_HEIGHT 355.62             // (mm) QQS-Pro: paper-calibrated 355.72, first layer raised 0.1 (2026-11-24). Stock "Z max length" 372.893 includes the 17.2 mm probe height
 
   #define DELTA_ENDSTOP_ADJ { -0.26, 0.0, -0.40 } // QQS-Pro: paper-calibrated 2026-11-24 (2 rounds)
 
@@ -2108,7 +2108,7 @@
 #endif
 
 // Homing speeds (linear=mm/min, rotational=°/min)
-#define HOMING_FEEDRATE_MM_M { (70*60), (70*60), (70*60) }
+#define HOMING_FEEDRATE_MM_M { (45*60), (45*60), (45*60) } // QQS-Pro: stock 45 mm/s; 70 stalled a single tower (stealthChop TMC2208)
 
 // Validate that endstops are triggered on homing moves
 #define VALIDATE_HOMING_ENDSTOPS
