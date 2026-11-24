@@ -150,7 +150,7 @@ namespace qqs {
   }
 
   const char *fmt_signed2(float v) {
-    static char buf[12];
+    static char buf[16];
     int32_t h = lroundf(v * 100.0f);
     const char sign = h < 0 ? '-' : '+';
     if (h < 0) h = -h;
@@ -159,7 +159,7 @@ namespace qqs {
   }
 
   const char *fmt_hm(uint32_t s) {
-    static char buf[12];
+    static char buf[24];
     const uint32_t m = (s + 30) / 60;
     sprintf_P(buf, PSTR("%lu:%02lu"), (unsigned long)(m / 60), (unsigned long)(m % 60));
     return buf;

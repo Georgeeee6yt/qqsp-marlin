@@ -36,6 +36,10 @@ GcodeSuite gcode;
 #include "queue.h"
 #include "../module/motion.h"
 
+#if ENABLED(QQS_UI)
+  #include "../lcd/tft/qqs/qqs_motion.h"
+#endif
+
 #if ENABLED(PRINTCOUNTER)
   #include "../module/printcounter.h"
 #endif
@@ -1145,6 +1149,11 @@ void GcodeSuite::process_parsed_command(const bool no_ok/*=false*/) {
       #endif
 
       case 999: M999(); break;                                    // M999: Restart after being Stopped
+
+      #if ENABLED(QQS_UI)
+        case 2000: qqs_M2000(); break;                            // M2000: QQS-Pro pause and park
+        case 2001: qqs_M2001(); break;                            // M2001: QQS-Pro resume from M2000
+      #endif
 
       #if ENABLED(POWER_LOSS_RECOVERY)
         case 413: M413(); break;                                  // M413: Enable/disable/query Power-Loss Recovery

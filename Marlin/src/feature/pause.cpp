@@ -77,6 +77,10 @@
 #include "../libs/nozzle.h"
 #include "pause.h"
 
+#if ENABLED(QQS_UI)
+  #include "../lcd/tft/qqs/qqs_motion.h"
+#endif
+
 #define DEBUG_OUT ENABLED(DEBUG_PAUSE_RESUME)
 #include "../core/debug_out.h"
 
@@ -714,5 +718,46 @@ void resume_print(const_float_t slow_load_length/*=0*/, const_float_t fast_load_
   ui.reset_status();
   ui.return_to_status();
 }
+
+
+#if ENABLED(QQS_UI)
+/**
+ * QQS-Pro v3 (M2001): undo pause_print() without the load / purge / "purge more?" steps
+ * that resume_print() runs for M24. Nozzle stays hot while parked, so just go back.
+ */
+void qqs_resume_unpark() {
+  if (!did_pause_print) return;
+
+  HOTEND_LOOP() thermalManager.reset_hotend_idle_timer(e);
+  if (thermalManager.degTargetHotend(active_extruder) && !thermalManager.hotEnoughToExtrude(active_extruder))
+    thermalManager.wait_for_hotend(active_extruder, false);
+
+  if (!axes_should_home()) {
+    // XY first (at the park height), then Z — the same straight segment the park came along
+    destination.set(resume_position.x, resume_position.y, current_position.z, current_position.e);
+    prepare_internal_move_to_destination(NOZZLE_PARK_XY_FEEDRATE);
+    destination.z = resume_position.z;
+    prepare_internal_move_to_destination(NOZZLE_PARK_Z_FEEDRATE);
+  }
+
+  // Unretract what pause_print() retracted
+  unscaled_e_move(PAUSE_PARK_RETRACT_LENGTH, feedRate_t(PAUSE_PARK_RETRACT_FEEDRATE));
+  planner.set_e_position_mm((destination.e = current_position.e = resume_position.e));
+
+  --did_pause_print;
+  if (print_job_timer.isPaused()) print_job_timer.start();
+  #if ENABLED(SDSUPPORT)
+    if (did_pause_print) {
+      --did_pause_print;
+      card.startOrResumeFilePrinting();
+      TERN_(POWER_LOSS_RECOVERY, if (recovery.enabled) recovery.save(true));
+    }
+  #endif
+  #if ENABLED(ADVANCED_PAUSE_FANS_PAUSE) && HAS_FAN
+    thermalManager.set_fans_paused(false);
+  #endif
+  TERN_(HAS_FILAMENT_SENSOR, runout.reset());
+}
+#endif // QQS_UI
 
 #endif // ADVANCED_PAUSE_FEATURE

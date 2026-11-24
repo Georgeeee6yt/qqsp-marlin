@@ -19,7 +19,7 @@ import cairosvg
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOOLS = os.path.join(ROOT, 'qqs_tools')
 OUT_DIR = os.path.join(ROOT, 'Marlin', 'src', 'lcd', 'tft', 'qqs')
-UI_SOURCES = ['qqs_ui.cpp', 'qqs_draw.cpp']
+UI_SOURCES = ['qqs_ui.cpp', 'qqs_draw.cpp', 'qqs_motion.cpp']
 
 FONT_FILE = '/usr/share/fonts/opentype/noto/NotoSansCJK-Medium.ttc'
 FONT_INDEX = 3   # Noto Sans CJK TC Medium
@@ -31,24 +31,29 @@ FONTS = [
     ('l',  22, 28, 23),
     ('xl', 40, 46, 39),
 ]
-XL_CHARS = ' 0123456789%°.+-−:'
+XL_CHARS = ' 0123456789%°.+-−:m?'
 
-ICONS = ['printer', 'flame', 'snowflake', 'home', 'arrows-move', 'arrows-down-up', 'terminal-2',
-         'settings', 'temperature', 'propeller', 'bed', 'player-pause', 'player-play', 'player-stop',
-         'chevron-left', 'wifi', 'wifi-off', 'check', 'x', 'plus', 'minus']
+ICONS = sorted(f[:-4] for f in os.listdir(os.path.join(TOOLS, 'icons')) if f.endswith('.svg'))
 ICON_SIZES = [(28, 2.0), (18, 2.4)]   # (px, stroke width in the 24-unit viewBox)
 
 
+L_EXTRA = '−關°%'   # used by F_L through variables (editor buttons, "off" values)
+
+
 def collect_chars():
-    chars = set()
+    """All non-ASCII chars in string literals; separately those on lines that use F_L."""
+    chars, large = set(), set(L_EXTRA)
+    lit_re = re.compile(r'"((?:[^"\\\n]|\\.)*)"')
     for fn in UI_SOURCES:
-        src = open(os.path.join(OUT_DIR, fn), encoding='utf-8').read()
-        for lit in re.findall(r'"((?:[^"\\\n]|\\.)*)"', src):
-            chars.update(c for c in lit if ord(c) > 0x7E)
+        for line in open(os.path.join(OUT_DIR, fn), encoding='utf-8'):
+            for lit in lit_re.findall(line):
+                na = set(c for c in lit if ord(c) > 0x7E)
+                chars |= na
+                if 'F_L' in line: large |= na
     bad = [c for c in chars if ord(c) > 0xFFFF]
     if bad:
         sys.exit('characters outside the BMP: %r' % bad)
-    return chars
+    return chars, large
 
 
 def pack(levels, w, h, bpp):
@@ -136,12 +141,12 @@ def c_bytes(b, indent='  '):
 
 
 def main():
-    used = collect_chars()
+    used, large = collect_chars()
     ascii_set = set(chr(c) for c in range(0x20, 0x7F))
     font_chars = {
         's': ascii_set | used,
         'm': ascii_set | used,
-        'l': ascii_set | used,
+        'l': ascii_set | large,
         'xl': set(XL_CHARS),
     }
 

@@ -141,7 +141,7 @@
 
 // QQS-Pro v3: own Traditional Chinese touch UI (Marlin/src/lcd/tft/qqs, assets from qqs_tools/gen_assets.py)
 #define QQS_UI
-#define QQS_FW_VERSION "v3.0"
+#define QQS_FW_VERSION "v3.1"
 #define COLOR_BACKGROUND   0x18C3   // #1A1A1A, matches the QQS UI (also used by the Marlin menus)
 #define COLOR_SELECTION_BG 0x59C2   // dark orange
 
