@@ -454,10 +454,22 @@ namespace qqs {
 
   static float bc_fed() { return planner.get_axis_position_mm(E_AXIS) - bc_e0; }
 
+  // Feeding is one long move per speed, cut short with M410, so it runs smoothly and doesn't
+  // depend on the screen handler topping up a queue of small moves.
+  static millis_t bc_cmd_ms = 0;
+  static void bc_feed(const bool slow) {
+    char cmd[48];
+    const int left = _MAX(10, 900 - int(bc_fed()));
+    sprintf_P(cmd, slow ? PSTR("M410\nM83\nG1 E%d F300") : PSTR("M410\nM83\nG1 E%d F1800"), slow ? _MIN(left, 150) : left);
+    queue.inject(cmd);
+    bc_slow = slow;
+    bc_cmd_ms = millis();
+  }
+
   static void bc_start() {
     if (!noz_ready() || queue.has_commands_queued() || planner.has_blocks_queued()) return;
     bc_e0 = planner.get_axis_position_mm(E_AXIS);
-    bc_slow = false;
+    bc_feed(false);
     bc_state = 1;
     ui.set_status("送料中…看到噴嘴出料就按「出來了」");
     redraw();
@@ -473,7 +485,7 @@ namespace qqs {
     redraw();
   }
   static void bc_out()    { bc_stop(true); }
-  static void bc_speed()  { bc_slow = !bc_slow; redraw(); }
+  static void bc_speed()  { bc_feed(!bc_slow); redraw(); }
   static void bc_cancel() {
     if (bc_state == 1) { bc_stop(false); ui.set_status("已停止送料"); }
     else if (bc_state == 3) {
@@ -497,11 +509,10 @@ namespace qqs {
     static millis_t next_ms = 0;
     ui.defer_status_screen();
     if (bc_state == 1) {
-      // Keep a few short moves queued: fast (30 mm/s) through the tube, slow (5 mm/s) near the nozzle.
-      // The length is read from the stepper position, so queued-but-cancelled moves don't count.
-      if (!queue.has_commands_queued() && planner.movesplanned() < 3)
-        queue.inject(bc_slow ? "M83\nG1 E2 F300" : "M83\nG1 E10 F1800");
-      if (bc_fed() > 900) { bc_stop(false); ui.set_status("送了 900 mm 還沒出料，已停止"); }
+      // The length is read from the stepper position, so the cut-short part of a move doesn't count.
+      const bool idle = !queue.has_commands_queued() && !planner.has_blocks_queued() && ELAPSED(millis(), bc_cmd_ms + 1000);
+      if (bc_fed() > 895) { bc_stop(false); ui.set_status("送了 900 mm 還沒出料，已停止"); }
+      else if (idle) bc_feed(bc_slow);   // a slow 150 mm leg ran out: keep going
     }
     else if (bc_state == 3 && ((!queue.has_commands_queued() && !planner.has_blocks_queued()) || ELAPSED(millis(), bc_stop_ms + 5000))) {
       bc_len = bc_fed();

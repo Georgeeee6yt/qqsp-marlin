@@ -260,7 +260,10 @@ void Touch::touch(touch_control_t *control) {
 
     // TODO: TOUCH could receive data to pass to the callback
     case BUTTON:
-      TERN_(QQS_UI, qqs_button_quiet_until = millis() + 350);
+      #if ENABLED(QQS_UI)
+        qqs_button_quiet_until = millis() + 350;
+        SERIAL_ECHOLNPGM("QQS touch ", x, ",", y);   // to tell real presses from phantom ones (USB log)
+      #endif
       ((screenFunc_t)control->data)();
       break;
     
