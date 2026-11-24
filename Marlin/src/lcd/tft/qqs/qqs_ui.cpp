@@ -65,6 +65,19 @@ namespace qqs {
   static bool  stopping = false;      // stop confirmed, waiting for the job to end
 
   static inline void redraw() { ui.refresh(LCDVIEW_REDRAW_NOW); }
+
+  // For screens with live values / background logic. Marlin only calls a screen handler while
+  // lcdDrawUpdate != NONE, and clears REDRAW_NOW after the handler returns, so a handler must
+  // keep itself alive (CALL_NO_REDRAW) and ask for its periodic redraw with CALL_REDRAW_NEXT.
+  // Returns whether this call should draw.
+  static bool live(millis_t &next_ms, const uint16_t period) {
+    const bool draw = ui.should_draw();
+    const millis_t now = millis();
+    const bool tick = ELAPSED(now, next_ms);
+    if (tick) next_ms = now + period;
+    ui.refresh(tick ? LCDVIEW_CALL_REDRAW_NEXT : LCDVIEW_CALL_NO_REDRAW);
+    return draw;
+  }
   static inline bool job_active() { return printJobOngoing() || card.isFileOpen(); }
   static void go_home_screen() { ui.return_to_status(); }
 
@@ -167,8 +180,7 @@ namespace qqs {
 
   static void editor_screen() {
     static millis_t next_ms = 0;
-    if (ed->show_current && ELAPSED(millis(), next_ms)) { next_ms = millis() + 1000; redraw(); }
-    if (!ui.should_draw()) return;
+    if (!live(next_ms, ed->show_current ? 1000 : 60000)) return;
 
     touch.clear();
     header(ed->title, ed_back);
@@ -352,8 +364,7 @@ namespace qqs {
   static void move_screen() {
     static millis_t next_ms = 0;
     ui.defer_status_screen();
-    if (ELAPSED(millis(), next_ms)) { next_ms = millis() + 500; redraw(); }
-    if (!ui.should_draw()) return;
+    if (!live(next_ms, 500)) return;
 
     touch.clear();
     header("移動", go_home_screen);
@@ -484,8 +495,7 @@ namespace qqs {
       if (bc_done) ui.set_status("量好了，確認後存檔");
       redraw();
     }
-    if (ELAPSED(millis(), next_ms)) { next_ms = millis() + (bc_state == 1 ? 250 : 1000); redraw(); }
-    if (!ui.should_draw()) return;
+    if (!live(next_ms, bc_state == 1 ? 250 : 1000)) return;
 
     touch.clear();
     header("管長校正", bc_cancel);
@@ -537,8 +547,7 @@ namespace qqs {
   static void filament_screen() {
     static millis_t next_ms = 0;
     ui.defer_status_screen();
-    if (ELAPSED(millis(), next_ms)) { next_ms = millis() + 1000; redraw(); }
-    if (!ui.should_draw()) return;
+    if (!live(next_ms, 1000)) return;
 
     touch.clear();
     header("進退料", go_home_screen);
