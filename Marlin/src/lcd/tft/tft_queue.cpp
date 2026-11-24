@@ -25,6 +25,7 @@
 #if HAS_GRAPHICAL_TFT
 
 #include "tft_queue.h"
+#include "qqs/qqs_font.h"
 #include "tft.h"
 #include "tft_image.h"
 
@@ -127,6 +128,16 @@ void TFT_Queue::canvas(queueTask_t *task) {
         image = ((parametersCanvasImage_t *)item)->image;
         colors = (uint16_t *)(item + sizeof(parametersCanvasImage_t));
         Canvas.AddImage(((parametersCanvasImage_t *)item)->x, ((parametersCanvasImage_t *)item)->y, image, colors);
+        break;
+
+      case CANVAS_ADD_QTEXT:
+        Canvas.AddQText(((parametersCanvasQText_t *)item)->x, ((parametersCanvasQText_t *)item)->y, ((parametersCanvasQText_t *)item)->font,
+                        (uint16_t *)(item + sizeof(parametersCanvasQText_t)), item + sizeof(parametersCanvasQText_t) + 3 * sizeof(uint16_t));
+        break;
+
+      case CANVAS_ADD_QBITMAP:
+        Canvas.AddQBitmap(((parametersCanvasQBitmap_t *)item)->x, ((parametersCanvasQBitmap_t *)item)->y, ((parametersCanvasQBitmap_t *)item)->bitmap,
+                          (uint16_t *)(item + sizeof(parametersCanvasQBitmap_t)));
         break;
 
       case CANVAS_ADD_BAR:
@@ -313,6 +324,62 @@ void TFT_Queue::add_image(int16_t x, int16_t y, MarlinImage image, uint16_t colo
   }
 
   add_image(x, y, image, colors + 1);
+}
+
+// QQS-Pro UI: text in a qqs bitmap font. The 3-step color ramp (bg -> color) is stored with the task.
+void TFT_Queue::add_qtext(int16_t x, int16_t y, const void *font, uint16_t color, uint16_t bg, const char *string) {
+  const uint16_t len = strlen(string);
+  handle_queue_overflow(sizeof(parametersCanvasQText_t) + 3 * sizeof(uint16_t) + len + 1);
+  parametersCanvas_t *task_parameters = (parametersCanvas_t *)(((uint8_t *)last_task) + sizeof(queueTask_t));
+  parametersCanvasQText_t *parameters = (parametersCanvasQText_t *)end_of_queue;
+  last_parameter = end_of_queue;
+
+  parameters->type = CANVAS_ADD_QTEXT;
+  parameters->x = x;
+  parameters->y = y;
+  parameters->font = font;
+
+  end_of_queue += sizeof(parametersCanvasQText_t);
+  uint16_t *colors = (uint16_t *)end_of_queue;
+  for (uint8_t i = 1; i < 4; i++) {
+    const uint16_t c = gradient(color, bg, (i << 8) / 3);
+    *colors++ = ENDIAN_COLOR(c);
+  }
+  end_of_queue = (uint8_t *)colors;
+  memcpy(end_of_queue, string, len + 1);
+  end_of_queue += len + 1;
+
+  task_parameters->count++;
+  parameters->nextParameter = end_of_queue;
+}
+
+// QQS-Pro UI: 1 or 2 bpp bitmap from flash.
+void TFT_Queue::add_qbitmap(int16_t x, int16_t y, const void *bitmap, uint16_t color, uint16_t bg) {
+  const uint8_t bpp = ((const qqs_bitmap_t *)bitmap)->bpp;
+  const uint8_t ncolors = bpp == 1 ? 1 : 3;
+  handle_queue_overflow(sizeof(parametersCanvasQBitmap_t) + ncolors * sizeof(uint16_t));
+  parametersCanvas_t *task_parameters = (parametersCanvas_t *)(((uint8_t *)last_task) + sizeof(queueTask_t));
+  parametersCanvasQBitmap_t *parameters = (parametersCanvasQBitmap_t *)end_of_queue;
+  last_parameter = end_of_queue;
+
+  parameters->type = CANVAS_ADD_QBITMAP;
+  parameters->x = x;
+  parameters->y = y;
+  parameters->bitmap = bitmap;
+
+  end_of_queue += sizeof(parametersCanvasQBitmap_t);
+  uint16_t *colors = (uint16_t *)end_of_queue;
+  if (bpp == 1)
+    *colors++ = ENDIAN_COLOR(color);
+  else
+    for (uint8_t i = 1; i < 4; i++) {
+      const uint16_t c = gradient(color, bg, (i << 8) / 3);
+      *colors++ = ENDIAN_COLOR(c);
+    }
+  end_of_queue = (uint8_t *)colors;
+
+  task_parameters->count++;
+  parameters->nextParameter = end_of_queue;
 }
 
 void TFT_Queue::add_bar(uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint16_t color) {

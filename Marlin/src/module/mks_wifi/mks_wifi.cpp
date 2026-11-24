@@ -244,6 +244,9 @@ uint8_t mks_wifi_check_packet(uint8_t *in_data){
 }
 
 
+uint8_t mks_wifi_ip[4] = {0,0,0,0};       // QQS-Pro UI: last reported IP
+uint8_t mks_wifi_net_state = 0;            // 0 unknown, 1 connected, 2 exception, 3 not configured
+
 void mks_wifi_parse_packet(ESP_PROTOC_FRAME *packet){
 	static uint8_t show_ip_once=0;
 	char str[100];
@@ -251,6 +254,12 @@ void mks_wifi_parse_packet(ESP_PROTOC_FRAME *packet){
 	switch(packet->type){
 		case ESP_TYPE_NET:
 			memset(str,0,100);
+			if(packet->data[6] == ESP_NET_WIFI_CONNECTED){
+				memcpy(mks_wifi_ip, packet->data, 4);
+				mks_wifi_net_state = 1;
+			}else{
+				mks_wifi_net_state = (packet->data[6] == ESP_NET_WIFI_EXCEPTION) ? 2 : 3;
+			}
 			if(packet->data[6] == ESP_NET_WIFI_CONNECTED){
 				if(show_ip_once==0){
 					show_ip_once=1;

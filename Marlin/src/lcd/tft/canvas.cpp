@@ -25,6 +25,7 @@
 #if HAS_GRAPHICAL_TFT
 
 #include "canvas.h"
+#include "qqs/qqs_font.h"
 
 uint16_t CANVAS::width, CANVAS::height;
 uint16_t CANVAS::startLine, CANVAS::endLine;
@@ -141,6 +142,29 @@ void CANVAS::AddImage(int16_t x, int16_t y, uint8_t image_width, uint8_t image_h
     else
       data += (image_width + pixelsPerByte - 1) / pixelsPerByte;
   }
+}
+
+// QQS-Pro UI: draw a UTF-8 string with a qqs bitmap font (2 bpp glyphs).
+void CANVAS::AddQText(int16_t x, int16_t y, const void *font, uint16_t *colors, const uint8_t *string) {
+  const qqs_font_t *f = (const qqs_font_t *)font;
+  if (endLine < y || startLine > y + f->height) return;
+  int16_t pen = x;
+  const uint8_t *s = string;
+  for (uint16_t cp; (cp = qqs_utf8_next(s));) {
+    const qqs_glyph_t *g = qqs_find_glyph(f, cp);
+    if (!g) g = qqs_find_glyph(f, '?');
+    if (!g) continue;
+    if (g->w && g->h)
+      AddImage(pen + g->xoff, y + g->ty, g->w, g->h, GREYSCALE2, (uint8_t *)(f->data + g->off), colors);
+    pen += g->adv;
+  }
+}
+
+// QQS-Pro UI: 1 or 2 bpp bitmap from flash.
+void CANVAS::AddQBitmap(int16_t x, int16_t y, const void *bitmap, uint16_t *colors) {
+  const qqs_bitmap_t *b = (const qqs_bitmap_t *)bitmap;
+  if (endLine < y || startLine > y + b->h) return;
+  AddImage(x, y, b->w, b->h, b->bpp == 1 ? GREYSCALE1 : GREYSCALE2, (uint8_t *)b->data, colors);
 }
 
 void CANVAS::AddRectangle(uint16_t x, uint16_t y, uint16_t rectangleWidth, uint16_t rectangleHeight, uint16_t color) {

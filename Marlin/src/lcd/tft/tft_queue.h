@@ -48,6 +48,8 @@ enum CanvasSubtype : uint8_t {
   CANVAS_ADD_IMAGE,
   CANVAS_ADD_BAR,
   CANVAS_ADD_RECTANGLE,
+  CANVAS_ADD_QTEXT,     // QQS-Pro UI: UTF-8 text in a qqs bitmap font
+  CANVAS_ADD_QBITMAP,   // QQS-Pro UI: 1/2 bpp bitmap from flash
 };
 
 typedef struct __attribute__((__packed__)) {
@@ -118,6 +120,24 @@ typedef struct __attribute__((__packed__)) {
   uint16_t color;
 } parametersCanvasRectangle_t;
 
+typedef struct __attribute__((__packed__)) {
+  CanvasSubtype type;
+  uint8_t *nextParameter;
+  int16_t x;
+  int16_t y;
+  const void *font;     // const qqs_font_t *
+  // followed by 3 colors (2 bpp ramp) and the NUL-terminated string
+} parametersCanvasQText_t;
+
+typedef struct __attribute__((__packed__)) {
+  CanvasSubtype type;
+  uint8_t *nextParameter;
+  int16_t x;
+  int16_t y;
+  const void *bitmap;   // const qqs_bitmap_t *
+  // followed by 1 (1 bpp) or 3 (2 bpp) colors
+} parametersCanvasQBitmap_t;
+
 class TFT_Queue {
   private:
     static uint8_t queue[TFT_QUEUE_SIZE];
@@ -149,5 +169,7 @@ class TFT_Queue {
     static void add_image(int16_t x, int16_t y, MarlinImage image, uint16_t color_main, uint16_t color_background, uint16_t color_shadow);
 
     static void add_bar(uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint16_t color);
+    static void add_qtext(int16_t x, int16_t y, const void *font, uint16_t color, uint16_t bg, const char *string);
+    static void add_qbitmap(int16_t x, int16_t y, const void *bitmap, uint16_t color, uint16_t bg);
     static void add_rectangle(uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint16_t color);
 };

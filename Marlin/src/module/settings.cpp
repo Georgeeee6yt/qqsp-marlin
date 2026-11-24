@@ -36,7 +36,7 @@
  */
 
 // Change EEPROM version if the structure changes
-#define EEPROM_VERSION "V88"
+#define EEPROM_VERSION TERN(QQS_UI, "Q88", "V88")   // QQS-Pro v3 adds qqs_settings
 #define EEPROM_OFFSET 100
 
 // Check the integrity of data offsets.
@@ -153,6 +153,10 @@
 
 #if ENABLED(TOUCH_SCREEN_CALIBRATION)
   #include "../lcd/tft_io/touch_calibration.h"
+#endif
+
+#if ENABLED(QQS_UI)
+  #include "../lcd/tft/qqs/qqs_settings.h"
 #endif
 
 #if HAS_ETHERNET
@@ -535,6 +539,13 @@ typedef struct SettingsDataStruct {
   //
   #if ENABLED(TOUCH_SCREEN_CALIBRATION)
     touch_calibration_t touch_calibration_data;
+  #endif
+
+  //
+  // QQS-Pro v3 UI
+  //
+  #if ENABLED(QQS_UI)
+    qqs_settings_t qqs_settings_data;
   #endif
 
   // Ethernet settings
@@ -1587,6 +1598,11 @@ void MarlinSettings::postprocess() {
       EEPROM_WRITE(touch_calibration.calibration);
     #endif
 
+    #if ENABLED(QQS_UI)
+      _FIELD_TEST(qqs_settings_data);
+      EEPROM_WRITE(qqs_settings);
+    #endif
+
     //
     // Ethernet network info
     //
@@ -2619,6 +2635,11 @@ void MarlinSettings::postprocess() {
         EEPROM_READ(touch_calibration.calibration);
       #endif
 
+      #if ENABLED(QQS_UI)
+        _FIELD_TEST(qqs_settings_data);
+        EEPROM_READ(qqs_settings);
+      #endif
+
       //
       // Ethernet network info
       //
@@ -3079,6 +3100,8 @@ void MarlinSettings::reset() {
   // TOUCH_SCREEN_CALIBRATION
   //
   TERN_(TOUCH_SCREEN_CALIBRATION, touch_calibration.calibration_reset());
+
+  TERN_(QQS_UI, qqs_settings_reset());
 
   //
   // Buzzer enable/disable

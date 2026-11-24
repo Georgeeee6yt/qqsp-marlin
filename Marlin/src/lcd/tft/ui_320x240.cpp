@@ -45,6 +45,10 @@
   #include "../../feature/bedlevel/bedlevel.h"
 #endif
 
+#if ENABLED(QQS_UI)
+  #include "qqs/qqs_ui.h"
+#endif
+
 void MarlinUI::tft_idle() {
   #if ENABLED(TOUCH_SCREEN)
     if (TERN0(HAS_TOUCH_SLEEP, lcd_sleep_task())) return;
@@ -64,6 +68,10 @@ void MarlinUI::tft_idle() {
 #if ENABLED(SHOW_BOOTSCREEN)
 
   void MarlinUI::show_bootscreen() {
+    #if ENABLED(QQS_UI)
+      qqs::boot_screen();
+      return;
+    #endif
     tft.queue.reset();
 
     tft.canvas(0, 0, TFT_WIDTH, TFT_HEIGHT);
@@ -87,7 +95,12 @@ void MarlinUI::tft_idle() {
   }
 
   void MarlinUI::bootscreen_completion(const millis_t sofar) {
-    if ((BOOTSCREEN_TIMEOUT) > sofar) safe_delay((BOOTSCREEN_TIMEOUT) - sofar);
+    #if ENABLED(QQS_UI)
+      // Fill the bar over whatever is left of the boot screen time
+      qqs::boot_finish((BOOTSCREEN_TIMEOUT) > sofar ? (BOOTSCREEN_TIMEOUT) - sofar : 0);
+    #else
+      if ((BOOTSCREEN_TIMEOUT) > sofar) safe_delay((BOOTSCREEN_TIMEOUT) - sofar);
+    #endif
     clear_lcd();
   }
 
@@ -217,7 +230,7 @@ void draw_fan_status(uint16_t x, uint16_t y, const bool blink) {
   tft.add_text(tft_string.center(64) + 6, 72, COLOR_FAN, tft_string);
 }
 
-#if ENABLED(SDSUPPORT)
+#if ENABLED(SDSUPPORT) && DISABLED(QQS_UI)
   /**
    * QQS-Pro has no SD card-detect pin, so Marlin can't see a card being swapped.
    * Like the stock firmware, (re)mount the card every time the SD icon is tapped,
@@ -235,6 +248,10 @@ void draw_fan_status(uint16_t x, uint16_t y, const bool blink) {
 #endif
 
 void MarlinUI::draw_status_screen() {
+  #if ENABLED(QQS_UI)
+    qqs::status_screen();
+    return;
+  #endif
   const bool blink = get_blink();
 
   TERN_(TOUCH_SCREEN, touch.clear());
@@ -360,7 +377,7 @@ void MarlinUI::draw_status_screen() {
 
   #if ENABLED(TOUCH_SCREEN)
     add_control(256, 130, menu_main, imgSettings);
-    #if ENABLED(SDSUPPORT)
+    #if ENABLED(SDSUPPORT) && DISABLED(QQS_UI)
       // QQS-Pro: tappable whenever no print is running, mounted or not (see sd_icon_screen)
       const bool pa = printingIsActive() || card.isFileOpen();
       add_control(0, 130, sd_icon_screen, imgSD, !pa, COLOR_CONTROL_ENABLED, pa ? COLOR_BUSY : COLOR_CONTROL_DISABLED);

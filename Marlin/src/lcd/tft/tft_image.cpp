@@ -79,7 +79,7 @@ const tImage LampOff_64x64x4           = { (void *)lamp_off_64x64x4, 64, 64, GRE
 const tImage LampOn_64x64x4           = { (void *)lamp_on_64x64x4, 64, 64, GREYSCALE4 };
 
 const tImage Images[imgCount] = {
-  TERN(SHOW_BOOTSCREEN, TERN(BOOT_MARLIN_LOGO_SMALL, MarlinLogo195x59x16, MARLIN_LOGO_FULL_SIZE), NoLogo),
+  TERN(QQS_UI, NoLogo, TERN(SHOW_BOOTSCREEN, TERN(BOOT_MARLIN_LOGO_SMALL, MarlinLogo195x59x16, MARLIN_LOGO_FULL_SIZE), NoLogo)),  // QQS-Pro draws its own
   HotEnd_64x64x4,
   Bed_64x64x4,
   Bed_Heated_64x64x4,

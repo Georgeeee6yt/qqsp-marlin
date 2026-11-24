@@ -49,6 +49,8 @@ class CANVAS {
     static void SetBackground(uint16_t color);
     static void AddText(uint16_t x, uint16_t y, uint16_t color, uint8_t *string, uint16_t maxWidth);
     static void AddImage(int16_t x, int16_t y, MarlinImage image, uint16_t *colors);
+    static void AddQText(int16_t x, int16_t y, const void *font, uint16_t *colors, const uint8_t *string);
+    static void AddQBitmap(int16_t x, int16_t y, const void *bitmap, uint16_t *colors);
 
     static void AddRectangle(uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint16_t color);
     static void AddBar(uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint16_t color);
