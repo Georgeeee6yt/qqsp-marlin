@@ -444,14 +444,16 @@ namespace qqs {
 
   // --- Bowden calibration ---
   static uint8_t bc_state = 0;   // 0 intro, 1 feeding, 2 result, 3 stopping (waiting for M410)
-  static bool bc_done = false;
+  static bool bc_done = false, bc_slow = false;
   static float bc_e0 = 0, bc_len = 0;
+  static millis_t bc_stop_ms = 0;
 
   static float bc_fed() { return planner.get_axis_position_mm(E_AXIS) - bc_e0; }
 
   static void bc_start() {
     if (!noz_ready() || queue.has_commands_queued() || planner.has_blocks_queued()) return;
     bc_e0 = planner.get_axis_position_mm(E_AXIS);
+    bc_slow = false;
     bc_state = 1;
     ui.set_status("送料中…看到噴嘴出料就按「出來了」");
     redraw();
@@ -463,12 +465,18 @@ namespace qqs {
     queue.inject("M410\nM82");
     bc_done = done;
     bc_state = 3;
+    bc_stop_ms = millis();
     redraw();
   }
   static void bc_out()    { bc_stop(true); }
+  static void bc_speed()  { bc_slow = !bc_slow; redraw(); }
   static void bc_cancel() {
     if (bc_state == 1) { bc_stop(false); ui.set_status("已停止送料"); }
-    else if (bc_state != 3) { bc_state = 0; ui.goto_screen(filament_screen); }
+    else {
+      if (bc_state == 3) queue.inject("M410\nM82");   // escape hatch if the stop never completed
+      bc_state = 0;
+      ui.goto_screen(filament_screen);
+    }
   }
   static void bc_retry()  { bc_state = 0; redraw(); }
   static void bc_save() {
@@ -485,11 +493,13 @@ namespace qqs {
     static millis_t next_ms = 0;
     ui.defer_status_screen();
     if (bc_state == 1) {
-      // Keep a few 5 mm moves queued, slow enough to react to (8 mm/s)
-      if (!queue.has_commands_queued() && planner.movesplanned() < 3) queue.inject("M83\nG1 E5 F480");
+      // Keep a few short moves queued: fast (30 mm/s) through the tube, slow (5 mm/s) near the nozzle.
+      // The length is read from the stepper position, so queued-but-cancelled moves don't count.
+      if (!queue.has_commands_queued() && planner.movesplanned() < 3)
+        queue.inject(bc_slow ? "M83\nG1 E2 F300" : "M83\nG1 E10 F1800");
       if (bc_fed() > 900) { bc_stop(false); ui.set_status("送了 900 mm 還沒出料，已停止"); }
     }
-    else if (bc_state == 3 && !queue.has_commands_queued() && !planner.has_blocks_queued()) {
+    else if (bc_state == 3 && ((!queue.has_commands_queued() && !planner.has_blocks_queued()) || ELAPSED(millis(), bc_stop_ms + 5000))) {
       bc_len = bc_fed();
       bc_state = bc_done ? 2 : 0;
       if (bc_done) ui.set_status("量好了，確認後存檔");
@@ -503,9 +513,9 @@ namespace qqs {
     char buf[72];
 
     if (bc_state == 0) {
-      text(10, 6,  F_S, C_TEXT, C_BG, "1. 先「退料」，把料頭剪平。");
-      text(10, 26, F_S, C_TEXT, C_BG, "2. 料插進擠出機，推到剛好被齒輪咬住。");
-      text(10, 46, F_S, C_TEXT, C_BG, "3. 按「開始送料」，噴嘴一出料就按「出來了」。");
+      text(10, 6,  F_S, C_TEXT, C_BG, "1. 先「退料」，把料頭剪平，插到剛好被齒輪咬住。");
+      text(10, 26, F_S, C_TEXT, C_BG, "2. 按「開始送料」，看鐵氟龍管裡的料頭往前跑。");
+      text(10, 46, F_S, C_TEXT, C_BG, "3. 快到噴頭按「放慢」，噴嘴一出料按「出來了」。");
       sprintf_P(buf, PSTR("目前管長 %d mm"), int(bowden()));
       text(10, 74, F_M, C_MUTED, C_BG, buf);
       if (!noz_ready()) {
@@ -521,10 +531,14 @@ namespace qqs {
       text_c(0, 6, TFT_WIDTH, F_S, C_MUTED, C_BG, "已送出");
       sprintf_P(buf, PSTR("%d mm"), int(bc_fed()));
       text_c(0, 26, TFT_WIDTH, F_XL, C_TEXT, C_BG, buf);
-      text_c(0, 86, TFT_WIDTH, F_S, C_MUTED, C_BG, "盯著噴嘴，一出料就按右邊");
+      text_c(0, 86, TFT_WIDTH, F_S, bc_slow ? C_WARN : C_MUTED, C_BG,
+             bc_slow ? "慢速 5 mm/s：一出料就按「出來了」" : "快速 30 mm/s：料頭快到噴頭時按「放慢」");
       Btn c; c.label = "停止"; button(4, 170, 100, 66, c, bc_cancel);
+      Btn sp; sp.icon = bc_slow ? &qqs_i28_chevrons_down : &qqs_i28_player_pause; sp.label = bc_slow ? "加快" : "放慢";
+      if (!bc_slow) { sp.fg = C_WARN; sp.border = C_WARN; }
+      button(108, 170, 100, 66, sp, bc_speed);
       Btn b; b.icon = &qqs_i28_check; b.label = "出來了！"; b.fg = C_OK; b.border = C_OK;
-      button(108, 170, 208, 66, b, bc_out);
+      button(212, 170, 104, 66, b, bc_out);
     }
     else {
       text_c(0, 6, TFT_WIDTH, F_S, C_MUTED, C_BG, "量到的管長");
