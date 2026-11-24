@@ -204,7 +204,9 @@ void mks_wifi_start_file_upload(ESP_PROTOC_FRAME *packet){
    DEBUG("File buff: %0X size %d (%0X)", file_buff, FILE_BUFFER_SIZE, FILE_BUFFER_SIZE);
 
 
-   OUT_WRITE(FAN1_PIN,HIGH);
+   #if PIN_EXISTS(FAN1)
+    OUT_WRITE(FAN1_PIN,HIGH);  // FB4S: hotend fan on during upload (QQS-Pro has no FAN1)
+   #endif
    OUT_WRITE(HEATER_0_PIN,LOW);
    OUT_WRITE(HEATER_BED_PIN,LOW);
 

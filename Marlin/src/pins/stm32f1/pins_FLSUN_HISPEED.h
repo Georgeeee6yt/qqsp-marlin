@@ -223,6 +223,26 @@
   //#define PS_ON_PIN                       PA3   // PW_CN /PW_OFF
 #endif
 
+/**
+ * MKS WIFI module (stock ESP8266 module in the Wi-Fi socket), driven by the
+ * FB4S mks_wifi code so it works with Color UI instead of MKS UI / LVGL.
+ * Same wiring as MKS Robin Nano in the FB4S fork: USART1 (PA9/PA10), IO0 PA8, IO1 PC7, RST PA5.
+ * Conflicts with TMC UART (SoftwareSerial uses the same socket pins), so standalone drivers only.
+ */
+#if DISABLED(NO_MKS_WIFI) && !HAS_TMC_UART && DISABLED(WIFISUPPORT)
+  #define MKS_WIFI
+#endif
+
+#ifdef MKS_WIFI
+  #define MKS_WIFI_SERIAL_NUM            SERIAL_PORT_2
+  #define MKS_WIFI_UART                  USART1
+  #undef PLATFORM_M997_SUPPORT
+
+  #define MKS_WIFI_IO0                      PA8
+  #define MKS_WIFI_IO4                      PC7
+  #define MKS_WIFI_IO_RST                   PA5
+#endif
+
 #if HAS_TFT_LVGL_UI
   #define MT_DET_1_PIN                      PA4   // MT_DET
   #define MT_DET_2_PIN                      PE6
@@ -310,7 +330,7 @@
     #define TFT_BTARROWS_COLOR            0xDEE6  // Yellow
     #define TFT_BTOKMENU_COLOR            0x145F  // Cyan
   #endif
-  #define TFT_BUFFER_SIZE                  14400
+  #define TFT_BUFFER_SIZE                  (320*12)  // was 14400; smaller buffer frees ~21 KB RAM for MKS WiFi (FB4S uses 480*8)
 
 #elif HAS_GRAPHICAL_TFT
 
