@@ -31,4 +31,8 @@ namespace qqs {
   void open_bs_prompt(const float total);   // end of a print with Z babystepping: offer to keep it
   void info_tabs(const bool sensors);       // tab strip under the header on the info / sensor pages
   void sensor_poll();                       // from tft_idle: count endstop edges while the sensor page is open
+  void go_term();
+  void go_pid();
+  void go_params();
+  void go_toggles();
 }

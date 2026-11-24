@@ -103,3 +103,6 @@ void print_pos(NUM_AXIS_ARGS(const_float_t), FSTR_P const prefix/*=nullptr*/, FS
   );
   if (suffix) serial_print(suffix); else SERIAL_EOL();
 }
+
+// QQS-Pro G-code terminal hook (the real one is in lcd/tft/qqs/qqs_ui_tools.cpp)
+__attribute__((weak)) void qqs_term_putc(const uint8_t) {}

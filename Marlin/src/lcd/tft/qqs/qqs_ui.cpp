@@ -875,10 +875,10 @@ namespace qqs {
       { &qqs_i18_target,          "自動校準", "需探頭", nullptr },
       { &qqs_i18_grid_dots,       "自動網格", "需探頭", nullptr },
       { &qqs_i18_arrows_vertical, "Z 偏移",   nullptr,  go_zoff },
-      { &qqs_i18_chart_line,      "PID 調整", "v3.2",   nullptr },
-      { &qqs_i18_adjustments,     "機器參數", "v3.2",   nullptr },
-      { &qqs_i18_toggle_right,    "功能開關", "v3.2",   nullptr },
-      { &qqs_i18_terminal_2,      "G-code",   "v3.2",   nullptr },
+      { &qqs_i18_chart_line,      "PID 調整", nullptr,  go_pid },
+      { &qqs_i18_adjustments,     "機器參數", nullptr,  go_params },
+      { &qqs_i18_toggle_right,    "功能開關", nullptr,  go_toggles },
+      { &qqs_i18_terminal_2,      "G-code",   nullptr,  go_term },
       { &qqs_i18_hand_finger,     "觸控校準", nullptr,  go_touch_cal },
       { &qqs_i18_info_circle,     "機器資訊", nullptr,  go_info },
       { &qqs_i18_restore,         "恢復預設", nullptr,  go_reset },
@@ -951,7 +951,7 @@ namespace qqs {
       { &qqs_i28_home,           "歸零",   nullptr,     act_home     },
       { &qqs_i28_arrows_move,    "移動",   nullptr,     act_move     },
       { &qqs_i28_arrows_down_up, "進退料", nullptr,     act_filament },
-      { &qqs_i28_terminal_2,     "G-code", "v3.2",      nullptr      },
+      { &qqs_i28_terminal_2,     "G-code", nullptr,     go_term      },
       { &qqs_i28_settings,       "設定",   nullptr,     act_settings },
     };
     for (uint8_t i = 0; i < 8; i++) {
@@ -1051,9 +1051,10 @@ namespace qqs {
   // flower + nozzle + arm, steam, and the "!" when its blink state flips (~25% of the pixels).
   void anim_draw(const bool full) {
     // Waiting for M109/M190: she holds still (steam and "!" keep going). Painting starts with the moves.
-    const bool waiting = printingIsActive() && wait_for_heatup,
-               running = printingIsActive() && !stopping && !waiting;
-    const uint8_t p8 = loop_pos >= LOOP_DRAW ? 254 : uint8_t(uint16_t(loop_pos) * 254 / LOOP_DRAW);
+    const bool still = qqs_settings.anim_off,                  // feature switch: a still picture
+               waiting = !still && printingIsActive() && wait_for_heatup,
+               running = !still && printingIsActive() && !stopping && !waiting;
+    const uint8_t p8 = (still || loop_pos >= LOOP_DRAW) ? 254 : uint8_t(uint16_t(loop_pos) * 254 / LOOP_DRAW);
     const bool bang_off = (running || waiting) && (anim_tick % 12) >= 10;
     static const uint8_t swing[4] = { 0, 1, 2, 1 };
     const uint8_t f = running ? swing[anim_tick & 3] : 0;
@@ -1094,7 +1095,7 @@ namespace qqs {
     static millis_t next_ms = 0;
     const millis_t now = millis();
     if (PENDING(now, next_ms)) return;
-    if (!ui.on_status_screen() || !print_layout) return;
+    if (!ui.on_status_screen() || !print_layout || qqs_settings.anim_off) return;
     if (!tft.queue.is_empty()) return;                            // previous frame still being sent
     const bool waiting = wait_for_heatup;                         // M109/M190: nothing moves, drawing is free
     if (printingIsActive() && !waiting && planner.movesplanned() < 3) return; // planner starving (or homing): skip a frame

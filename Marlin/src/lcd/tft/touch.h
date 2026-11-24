@@ -84,7 +84,7 @@ typedef struct __attribute__((__packed__)) {
   intptr_t data;
 } touch_control_t;
 
-#define MAX_CONTROLS        16
+#define MAX_CONTROLS        TERN(QQS_UI, 40, 16)   // QQS G-code terminal keyboard
 #define MINIMUM_HOLD_TIME   TERN(QQS_UI, 30, 15)
 #define TOUCH_REPEAT_DELAY  75
 #define MIN_REPEAT_DELAY    25

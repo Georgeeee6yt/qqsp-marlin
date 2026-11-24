@@ -20,6 +20,9 @@
 #include "../../../module/delta.h"
 #include "../../../module/settings.h"
 #include "../../../gcode/queue.h"
+#if HAS_FILAMENT_SENSOR
+  #include "../../../feature/runout.h"
+#endif
 #if HAS_BUZZER
   #include "../../../libs/buzzer.h"
 #endif
@@ -598,6 +601,343 @@ namespace qqs {
     button(204, 180, 112, 56, sv, cal_save);
   }
 
+
+  // =========================================================================
+  // Shared: save button in the header, on/off pill
+  // =========================================================================
+
+  static void hdr_save() { if (run("M500")) ui.set_status("已存檔"); redraw(); }
+  static void header_save(const char *title, screenFunc_t back) {
+    header(title, back);
+    Btn b; b.label = "存檔"; b.bg = C_BAR; b.border = C_ACCENT; b.fg = C_ACCENT;
+    button(258, 3, 58, HEADER_H - 7, b, hdr_save);
+  }
+  static void pill(const int16_t x, const int16_t y, const bool on, screenFunc_t cb) {
+    Btn b; b.label = on ? "開" : "關";
+    if (on) { b.fg = C_OK; b.border = C_OK; }
+    button(x, y, 64, 32, b, cb);
+  }
+
+  // =========================================================================
+  // PID
+  // =========================================================================
+
+  static uint8_t pid_state = 0;     // 0 idle, 1 hotend running, 2 bed running, 3 done
+  static millis_t pid_ms = 0;
+
+  static void pid_start(const bool bed) {
+    if (job_active() || pid_state == 1 || pid_state == 2) return;
+    if (!run(bed ? "M303 E-1 S60 C8 U1" : "M303 E0 S220 C8 U1")) return;
+    pid_state = bed ? 2 : 1;
+    pid_ms = millis();
+    ui.set_status(bed ? "熱床 PID 調校中（約 5–10 分鐘）" : "噴頭 PID 調校中（約 3–5 分鐘）");
+    redraw();
+  }
+  static void pid_hot() { pid_start(false); }
+  static void pid_bed() { pid_start(true); }
+  static void pid_stop() { wait_for_heatup = false; ui.set_status("已停止調校"); redraw(); }
+
+  static void pid_screen() {
+    static millis_t next_ms = 0;
+    ui.defer_status_screen();
+    if ((pid_state == 1 || pid_state == 2) && ELAPSED(millis(), pid_ms + 2000) && queue_idle()) {
+      pid_state = 3;
+      ui.set_status("調校完成，已套用；要保留請按存檔");
+      redraw();
+    }
+    if (!live(next_ms, 1000)) return;
+
+    touch.clear();
+    header_save("PID 調整", go_settings);
+    canvas(0, HEADER_H, TFT_WIDTH, 140, C_BG);
+    char v[64], a[16], b[16], c[16];
+    #if ENABLED(PIDTEMP)
+      const auto &hp = thermalManager.temp_hotend[0].pid;
+      text(10, 6, F_M, C_TEXT, C_BG, "噴頭");
+      sprintf_P(v, PSTR("P %s  I %s  D %s"), f2(a, hp.p()), f2(b, hp.i()), f2(c, hp.d()));
+      text(60, 8, F_S, C_MUTED, C_BG, v);
+    #endif
+    #if ENABLED(PIDTEMPBED)
+      const auto &bp = thermalManager.temp_bed.pid;
+      text(10, 34, F_M, C_TEXT, C_BG, "熱床");
+      sprintf_P(v, PSTR("P %s  I %s  D %s"), f2(a, bp.p()), f2(b, bp.i()), f2(c, bp.d()));
+      text(60, 36, F_S, C_MUTED, C_BG, v);
+    #endif
+    const bool busy = pid_state == 1 || pid_state == 2;
+    if (busy) {
+      sprintf_P(v, PSTR("調校中…　噴頭 %d°　熱床 %d°"), thermalManager.wholeDegHotend(0), thermalManager.wholeDegBed());
+      text(10, 70, F_M, C_WARN, C_BG, v);
+      text(10, 96, F_S, C_MUTED, C_BG, "加熱、冷卻來回 8 次，算好會自動套用。");
+    }
+    else {
+      text(10, 70, F_S, C_MUTED, C_BG, "噴頭用 220°、熱床用 60° 調校，跟平常列印的溫度接近。");
+      text(10, 88, F_S, C_MUTED, C_BG, "調校時別碰噴頭和熱床；完成後按右上角「存檔」。");
+    }
+
+    if (busy) {
+      Btn s; s.icon = &qqs_i28_player_stop; s.label = "停止調校"; s.fg = C_STOP; s.border = C_STOP;
+      button(4, 176, 312, 60, s, pid_stop);
+    }
+    else {
+      Btn h; h.icon = &qqs_i28_temperature; h.label = "噴頭 220°"; h.enabled = !job_active(); button(4, 176, 154, 60, h, pid_hot);
+      Btn d; d.icon = &qqs_i28_bed; d.label = "熱床 60°"; d.enabled = !job_active(); button(162, 176, 154, 60, d, pid_bed);
+    }
+  }
+
+  void go_pid() { if (pid_state == 3) pid_state = 0; ui.goto_screen(pid_screen); }
+
+  // =========================================================================
+  // Machine parameters
+  // =========================================================================
+
+  static void pr_esteps(const float d) {
+    char cmd[32], a[16];
+    sprintf_P(cmd, PSTR("M92 E%s"), f2(a, planner.settings.axis_steps_per_mm[E_AXIS] + d));
+    run(cmd);
+    redraw();
+  }
+  static void pr_em1()  { pr_esteps(-1); }
+  static void pr_em01() { pr_esteps(-0.1f); }
+  static void pr_ep01() { pr_esteps(+0.1f); }
+  static void pr_ep1()  { pr_esteps(+1); }
+  static void pr_n5()   { qqs_settings.test_count = 5;  redraw(); }
+  static void pr_n10()  { qqs_settings.test_count = 10; redraw(); }
+  static void pr_oneway() { qqs_settings.one_way_approach ^= 1; redraw(); }
+  static void pr_soakm() { if (qqs_settings.soak_minutes) qqs_settings.soak_minutes--; redraw(); }
+  static void pr_soakp() { if (qqs_settings.soak_minutes < 5) qqs_settings.soak_minutes++; redraw(); }
+  static void pr_diff()  { qqs_settings.show_remeasure_diff ^= 1; redraw(); }
+
+  static void params_screen() {
+    static millis_t next_ms = 0;
+    ui.defer_status_screen();
+    if (!live(next_ms, 1000)) return;
+
+    touch.clear();
+    header_save("機器參數", go_settings);
+    char v[24], a[16];
+    constexpr int16_t y0 = HEADER_H + 4, pitch = 41;
+    auto label = [&](const uint8_t r, const char *t, const char *sub) {
+      canvas(0, y0 + r * pitch, 120, 36, C_BG);
+      text(8, sub ? 0 : 7, F_M, C_TEXT, C_BG, t);
+      if (sub) text(8, 20, F_S, C_DIM, C_BG, sub);
+    };
+
+    label(0, "E 步數", f2(a, planner.settings.axis_steps_per_mm[E_AXIS]));
+    { static const char * const l[4] = { "−1", "−0.1", "+0.1", "+1" };
+      static const screenFunc_t cb[4] = { pr_em1, pr_em01, pr_ep01, pr_ep1 };
+      for (uint8_t i = 0; i < 4; i++) { Btn b; b.label = l[i]; button(124 + i * 49, y0, 45, 34, b, cb[i]); } }
+
+    label(1, "一致性測試", "每塔次數");
+    { Btn b; b.label = "5 次";  if (qqs_settings.test_count != 10) { b.fg = C_ACCENT; b.border = C_ACCENT; } button(124, y0 + pitch, 94, 34, b, pr_n5); }
+    { Btn b; b.label = "10 次"; if (qqs_settings.test_count == 10) { b.fg = C_ACCENT; b.border = C_ACCENT; } button(222, y0 + pitch, 94, 34, b, pr_n10); }
+
+    label(2, "從上往下逼近", "往上先多抬 0.2");
+    pill(252, y0 + 2 * pitch + 1, qqs_settings.one_way_approach, pr_oneway);
+
+    label(3, "到溫穩定等待", "校準開始前");
+    { Btn b; b.label = "−"; button(160, y0 + 3 * pitch, 44, 34, b, pr_soakm); }
+    canvas(204, y0 + 3 * pitch, 64, 34, C_BG);
+    sprintf_P(v, PSTR("%u 分"), qqs_settings.soak_minutes);
+    text_c(0, 7, 64, F_M, C_TEXT, C_BG, v);
+    { Btn b; b.label = "+"; button(272, y0 + 3 * pitch, 44, 34, b, pr_soakp); }
+
+    label(4, "顯示兩次相差", "重新歸零再量後");
+    pill(252, y0 + 4 * pitch + 1, qqs_settings.show_remeasure_diff, pr_diff);
+  }
+
+  void go_params() { ui.goto_screen(params_screen); }
+
+  // =========================================================================
+  // Feature switches
+  // =========================================================================
+
+  static void tg_runout() {
+    #if HAS_FILAMENT_SENSOR
+      run(runout.enabled ? "M412 S0" : "M412 S1");
+    #endif
+    redraw();
+  }
+  static void tg_probe() { qqs_settings.probe_installed ^= 1; redraw(); }
+  static void tg_anim()  { qqs_settings.anim_off ^= 1; redraw(); }
+
+  static void toggles_screen() {
+    static millis_t next_ms = 0;
+    ui.defer_status_screen();
+    if (!live(next_ms, 1000)) return;
+
+    touch.clear();
+    header_save("功能開關", go_settings);
+    constexpr int16_t y0 = HEADER_H + 6, pitch = 50;
+    auto row = [&](const uint8_t r, const char *t, const char *sub, const bool on, screenFunc_t cb) {
+      canvas(0, y0 + r * pitch, 244, 44, C_BG);
+      text(10, 2, F_M, C_TEXT, C_BG, t);
+      text(10, 24, F_S, C_DIM, C_BG, sub);
+      pill(252, y0 + r * pitch + 6, on, cb);
+    };
+    row(0, "斷料感測器", "這台原廠沒裝；裝了再打開", TERN0(HAS_FILAMENT_SENSOR, runout.enabled), tg_runout);
+    row(1, "已安裝探頭", "感測器頁顯示探頭；自動校準要用", qqs_settings.probe_installed, tg_probe);
+    row(2, "列印中動畫", "關掉就顯示靜態圖，完全不佔 CPU", !qqs_settings.anim_off, tg_anim);
+    canvas(0, y0 + 3 * pitch, TFT_WIDTH, 30, C_BG);
+    text(10, 6, F_S, C_MUTED, C_BG, "改完按右上角「存檔」，重開機才會保留。");
+  }
+
+  void go_toggles() { ui.goto_screen(toggles_screen); }
+
+  // =========================================================================
+  // G-code terminal
+  // =========================================================================
+
+  #define TERM_LINES 24
+  #define TERM_COLS  48
+  #define TERM_SHOW  6
+  #define TERM_IN    40
+  #define TERM_HIST  5
+
+  static char term_log[TERM_LINES][TERM_COLS + 1];
+  static uint8_t term_head = 0, term_col = 0, term_scroll = 0;
+  static bool term_open = false, term_from_home = false;
+  static volatile bool term_dirty = false;
+  static bool term_in_dirty = false;
+  static char term_in[TERM_IN + 1];
+  static uint8_t term_len = 0;
+  static char term_hist[TERM_HIST][TERM_IN + 1];
+  static uint8_t term_hist_n = 0, term_hist_pos = 0;
+
+  static void term_newline() {
+    term_head = (term_head + 1) % TERM_LINES;
+    term_log[term_head][0] = '\0';
+    term_col = 0;
+  }
+  static void term_put(const uint8_t c) {
+    if (c == '\r') return;
+    if (c == '\n') {
+      if (!strcmp_P(term_log[term_head], PSTR("ok"))) { term_log[term_head][0] = '\0'; term_col = 0; return; }   // drop bare "ok"
+      term_newline();
+      term_dirty = true;
+      return;
+    }
+    if (term_col >= TERM_COLS) term_newline();
+    term_log[term_head][term_col++] = (c < 0x20 || c > 0x7E) ? '?' : char(c);
+    term_log[term_head][term_col] = '\0';
+    term_dirty = true;
+  }
+  static void term_puts(const char *s) { while (*s) term_put(*s++); term_put('\n'); }
+
+  static void term_draw_log() {
+    term_dirty = false;
+    canvas(0, HEADER_H, TFT_WIDTH, TERM_SHOW * 15 + 4, C_BAR);
+    // The newest line is term_head (may be empty while a line is being written)
+    const uint8_t newest = term_log[term_head][0] ? term_head : (term_head + TERM_LINES - 1) % TERM_LINES;
+    for (uint8_t r = 0; r < TERM_SHOW; r++) {
+      const uint8_t back = TERM_SHOW - 1 - r + term_scroll;
+      if (back >= TERM_LINES - 1) continue;
+      const char *l = term_log[(newest + TERM_LINES - back) % TERM_LINES];
+      if (*l) text(4, 2 + r * 15, F_S, *l == '>' ? C_ACCENT : C_TEXT, C_BAR, l);
+    }
+    if (term_scroll) text_r(TFT_WIDTH - 4, 2, F_S, C_WARN, C_BAR, "▲ 往前");
+  }
+  static void term_draw_in() {
+    term_in_dirty = false;
+    canvas(0, HEADER_H + TERM_SHOW * 15 + 6, TFT_WIDTH, 24, C_TILE);
+    frame(0, 0, TFT_WIDTH, 24, C_ACCENT);
+    char t[TERM_IN + 4];
+    sprintf_P(t, PSTR("> %s_"), term_in);
+    text(6, 3, F_M, C_TEXT, C_TILE, t);
+  }
+
+  static void term_add(const char c) { if (term_len < TERM_IN) { term_in[term_len++] = c; term_in[term_len] = '\0'; } term_in_dirty = true; }
+  template<char C> static void tk() {
+    // A space after a letter is natural; letters after digits start a new word automatically
+    if (C >= 'A' && C <= 'Z' && term_len && term_in[term_len - 1] != ' ') term_add(' ');
+    term_add(C);
+  }
+  static void tk_bs()  { if (term_len) term_in[--term_len] = '\0'; term_in_dirty = true; }
+  static void tk_sp()  { if (term_len && term_in[term_len - 1] != ' ') term_add(' '); }
+  static void tk_hist() {
+    if (!term_hist_n) return;
+    term_hist_pos = (term_hist_pos + 1) % term_hist_n;
+    strcpy(term_in, term_hist[term_hist_pos]); term_len = strlen(term_in);
+    term_in_dirty = true;
+  }
+  static void term_send_str(const char *cmd) {
+    if (!*cmd) return;
+    if (!run(cmd)) return;
+    char e[TERM_IN + 3]; sprintf_P(e, PSTR("> %s"), cmd);
+    term_puts(e);
+    // history: newest first, no duplicates of the newest
+    if (!term_hist_n || strcmp(term_hist[0], cmd)) {
+      for (int8_t i = _MIN(term_hist_n, TERM_HIST - 1); i > 0; i--) strcpy(term_hist[i], term_hist[i - 1]);
+      strcpy(term_hist[0], cmd);
+      if (term_hist_n < TERM_HIST) term_hist_n++;
+    }
+    term_hist_pos = term_hist_n - 1;   // next ↑ wraps to the newest
+    term_scroll = 0;
+  }
+  static void tk_send() {
+    while (term_len && term_in[term_len - 1] == ' ') term_in[--term_len] = '\0';
+    char cmd[TERM_IN + 1]; strcpy(cmd, term_in);
+    term_send_str(cmd);
+    term_in[0] = '\0'; term_len = 0; term_in_dirty = true;
+  }
+  static void tk_m503() { term_send_str("M503"); }
+  static void tk_m119() { term_send_str("M119"); }
+  static void tk_m114() { term_send_str("M114"); }
+  static void tk_m500() { term_send_str("M500"); }
+  static void term_up()   { if (term_scroll < TERM_LINES - TERM_SHOW - 1) term_scroll += 3; term_dirty = true; }
+  static void term_down() { term_scroll = term_scroll > 3 ? term_scroll - 3 : 0; term_dirty = true; }
+  static void term_back() {
+    term_open = false;
+    if (term_from_home) ui.return_to_status(); else go_settings();
+  }
+
+  static void term_screen() {
+    static millis_t next_ms = 0;
+    ui.defer_status_screen();
+    if (!live(next_ms, 60000)) {           // between full redraws: only what changed
+      if (term_dirty) term_draw_log();
+      if (term_in_dirty) term_draw_in();
+      return;
+    }
+
+    touch.clear();
+    header("G-code", term_back);
+    term_draw_log();
+    touch.add_control(BUTTON, 0, HEADER_H, TFT_WIDTH, (TERM_SHOW * 15 + 4) / 2, (intptr_t)term_up);
+    touch.add_control(BUTTON, 0, HEADER_H + (TERM_SHOW * 15 + 4) / 2, TFT_WIDTH, (TERM_SHOW * 15 + 4) / 2, (intptr_t)term_down);
+    term_draw_in();
+
+    constexpr int16_t ky = HEADER_H + TERM_SHOW * 15 + 32, kh = 27, kp = 29;
+    static const char row1[] = "GMTSEFXYZP";
+    static const screenFunc_t row1_cb[10] = { tk<'G'>, tk<'M'>, tk<'T'>, tk<'S'>, tk<'E'>, tk<'F'>, tk<'X'>, tk<'Y'>, tk<'Z'>, tk<'P'> };
+    static const char row2[] = "1234567890.";
+    static const screenFunc_t row2_cb[11] = { tk<'1'>, tk<'2'>, tk<'3'>, tk<'4'>, tk<'5'>, tk<'6'>, tk<'7'>, tk<'8'>, tk<'9'>, tk<'0'>, tk<'.'> };
+    char k[2] = { 0, 0 };
+    for (uint8_t i = 0; i < 10; i++) { k[0] = row1[i]; Btn b; b.label = k; button(1 + i * kp, ky, kp - 2, kh, b, row1_cb[i]); }
+    { Btn b; b.label = "←"; b.fg = C_WARN; button(1 + 10 * kp, ky, kp - 2, kh, b, tk_bs); }
+    for (uint8_t i = 0; i < 11; i++) { k[0] = row2[i]; Btn b; b.label = k; button(1 + i * kp, ky + kp, kp - 2, kh, b, row2_cb[i]); }
+
+    const int16_t y3 = ky + 2 * kp;
+    { Btn b; b.label = "-";    button(1,   y3, 27, kh, b, tk<'-'>); }
+    { Btn b; b.label = "空白"; b.font = &F_S; button(30,  y3, 36, kh, b, tk_sp); }
+    { Btn b; b.label = "M503"; b.font = &F_S; b.fg = C_COLD; button(68,  y3, 42, kh, b, tk_m503); }
+    { Btn b; b.label = "M119"; b.font = &F_S; b.fg = C_COLD; button(112, y3, 42, kh, b, tk_m119); }
+    { Btn b; b.label = "M114"; b.font = &F_S; b.fg = C_COLD; button(156, y3, 42, kh, b, tk_m114); }
+    { Btn b; b.label = "M500"; b.font = &F_S; b.fg = C_COLD; button(200, y3, 42, kh, b, tk_m500); }
+    { Btn b; b.label = "↑";    button(244, y3, 27, kh, b, tk_hist); }
+    { Btn b; b.label = "送出"; b.font = &F_S; b.fg = C_ACCENT; b.border = C_ACCENT; button(273, y3, 46, kh, b, tk_send); }
+  }
+
+  void go_term() {
+    term_from_home = ui.on_status_screen();
+    term_open = true;
+    term_scroll = 0;
+    ui.goto_screen(term_screen);
+  }
+
+  void term_capture(const uint8_t c) { if (term_open) term_put(c); }
+
 } // namespace qqs
+
+void qqs_term_putc(const uint8_t c) { qqs::term_capture(c); }
 
 #endif // QQS_UI

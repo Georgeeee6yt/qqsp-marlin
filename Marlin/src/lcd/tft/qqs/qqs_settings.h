@@ -12,7 +12,8 @@ typedef struct __attribute__((__packed__)) {
   uint8_t one_way_approach;    // calibration: always finish a Z adjustment moving down
   uint8_t show_remeasure_diff; // calibration: show the difference after "re-home and measure again"
   uint8_t probe_installed;     // sensor page: show the probe as installed (0 = dashed "not installed")
-  uint8_t reserved[7];
+  uint8_t anim_off;            // printing screen: still picture instead of the animation
+  uint8_t reserved[6];
 } qqs_settings_t;
 
 extern qqs_settings_t qqs_settings;
