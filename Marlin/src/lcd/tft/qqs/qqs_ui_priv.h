@@ -29,7 +29,8 @@ namespace qqs {
   void go_cal();
   void go_sensors();
   void open_bs_prompt(const float total);   // end of a print with Z babystepping: offer to keep it
-  void info_tabs(const bool sensors);       // tab strip under the header on the info / sensor pages
+  void info_tabs(const uint8_t tab);        // tab strip under the header on the info pages: 0 info, 1 sensors, 2 Wi-Fi
+  void go_wifi();
   void sensor_poll();                       // from tft_idle: count endstop edges while the sensor page is open
   void go_term();
   void go_pid();

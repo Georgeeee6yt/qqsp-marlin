@@ -816,7 +816,7 @@ namespace qqs {
     if (!ui.should_draw()) return;
     touch.clear();
     header("機器資訊", go_settings);
-    info_tabs(false);
+    info_tabs(0);
     canvas(0, HEADER_H + 32, TFT_WIDTH, TFT_HEIGHT - HEADER_H - 32, C_BG);
     char v[64], a[16], b[16], c[16];
     int16_t y = 4;

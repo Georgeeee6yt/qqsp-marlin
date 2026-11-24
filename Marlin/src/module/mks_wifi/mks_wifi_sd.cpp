@@ -1,4 +1,5 @@
 #include "mks_wifi_sd.h"
+#include "../../lcd/tft/qqs/qqs_wifi_diag.h"
 
 #include "../../MarlinCore.h"
 #include "../../lcd/marlinui.h"
@@ -156,9 +157,19 @@ void mks_wifi_start_file_upload(ESP_PROTOC_FRAME *packet){
 
    file_size=(packet->data[4] << 24) | (packet->data[3] << 16) | (packet->data[2] << 8) | packet->data[1];
    DEBUG("Start file %s size %d",file_name,file_size);
+   qqs_wdiag.up_count++;
+   strncpy(qqs_wdiag.up_name, file_name + 3, sizeof(qqs_wdiag.up_name) - 1);
+   qqs_wdiag.up_name[sizeof(qqs_wdiag.up_name) - 1] = 0;
+   qqs_wdiag.up_size = file_size;
+   qqs_wdiag.up_recv = qqs_wdiag.up_written = qqs_wdiag.up_pk = qqs_wdiag.up_last_sector = 0;
+   qqs_wdiag.up_reason = '?'; qqs_wdiag.up_cndtr = 0; qqs_wdiag.up_sr = 0; qqs_wdiag.up_io4 = 0;
+   memset(qqs_wdiag.up_first, 0, sizeof(qqs_wdiag.up_first));
+   char fail_reason = 'T';
+   uint32_t pk_count = 0;
    
    //Отмонтировать SD от Marlin, Монтировать FATFs 
    if(mks_wifi_sd_init()){
+      qqs_wdiag.up_reason = 'M';
       ERROR("Error SD mount");
       ui.set_status((const char *)"Error SD mount",true);
       ui.update();
@@ -170,6 +181,7 @@ void mks_wifi_start_file_upload(ESP_PROTOC_FRAME *packet){
    //открыть файл для записи
    res=f_open((FIL *)&upload_file,file_name,FA_CREATE_ALWAYS | FA_WRITE);
    if(res){
+      qqs_wdiag.up_reason = 'F';
       ERROR("File open error %d",res);
       ui.set_status((const char *)"File open error",true);
       ui.update();
@@ -235,8 +247,11 @@ void mks_wifi_start_file_upload(ESP_PROTOC_FRAME *packet){
          }
 
 
+         if(!pk_count) memcpy(qqs_wdiag.up_first, data_packet, 8);
+         ++pk_count;
          if(*data_packet != ESP_PROTOC_HEAD){
             ERROR("Wrong packet head %0X at %0X", *data_packet, data_packet);
+            fail_reason = 'H';
             break;
          }
 
@@ -244,6 +259,7 @@ void mks_wifi_start_file_upload(ESP_PROTOC_FRAME *packet){
          
          if((in_sector - last_sector) > 1){
             ERROR("IN Sec: %d Prev sec: %d",in_sector,last_sector);
+            fail_reason = 'S';
             dma_stopped = 2;
             break;
          }else{
@@ -267,6 +283,7 @@ void mks_wifi_start_file_upload(ESP_PROTOC_FRAME *packet){
             res=f_write((FIL *)&upload_file,(uint8_t*)file_buff,data_to_write,&bytes_writen);
             if(res){
                ERROR("Write err %d",res);
+               fail_reason = 'W';
                break;
             }
 
@@ -294,6 +311,7 @@ void mks_wifi_start_file_upload(ESP_PROTOC_FRAME *packet){
                res=f_write((FIL *)&upload_file,(uint8_t*)file_buff,file_data_size,&bytes_writen);
                if(res){
                   ERROR("Write err %d",res);
+                  fail_reason = 'W';
                   break;
                }
                file_size_writen+=bytes_writen;
@@ -323,6 +341,15 @@ void mks_wifi_start_file_upload(ESP_PROTOC_FRAME *packet){
       }
    }
    
+   // QQS diagnostics: where the DMA stood, USART errors, flow-control pin
+   qqs_wdiag.up_cndtr = DMA1_Channel5->CNDTR;
+   qqs_wdiag.up_sr = USART1->SR;
+   qqs_wdiag.up_io4 = READ(MKS_WIFI_IO4);
+   if (!pk_count) memcpy(qqs_wdiag.up_first, (const void *)dma_buff[dma_buff_index], 8);   // partial packet, if any
+   if (dma_stopped == 2 && fail_reason == 'T') fail_reason = 'E';
+   qqs_wdiag.up_pk = pk_count;
+   qqs_wdiag.up_last_sector = last_sector;
+
    mks_wifi_hw_restore();   
    
    if((dma_timeout == 0) || (dma_stopped == 2)) {
@@ -342,7 +369,10 @@ void mks_wifi_start_file_upload(ESP_PROTOC_FRAME *packet){
    f_close((FIL *)&upload_file);
    DEBUG("File closed");
 
+   qqs_wdiag.up_recv = file_inc_size;
+   qqs_wdiag.up_written = file_size_writen;
    if( (file_size == file_inc_size) && (file_size == file_size_writen) ){
+         qqs_wdiag.up_reason = 'O';
          TERN_(USE_WATCHDOG, wd_reset());
          mks_wifi_sd_deinit();
          DEBUG("Remount SD");
@@ -366,7 +396,13 @@ void mks_wifi_start_file_upload(ESP_PROTOC_FRAME *packet){
          #if ENABLED(TFT_480x320) || ENABLED(TFT_480x320_SPI)
          mks_end_transmit();
          #endif
-         ui.set_status((const char *)"Upload failed",true);
+         qqs_wdiag.up_reason = (fail_reason == 'T' && dma_timeout) ? 'Z' : fail_reason;
+         {
+           char m[48];
+           sprintf(m, "Upload failed %c pk%lu %lu/%luKB", qqs_wdiag.up_reason, (unsigned long)pk_count,
+                   (unsigned long)(file_inc_size / 1024), (unsigned long)(file_size / 1024));
+           ui.set_status(m, true);
+         }
          DEBUG("Upload failed! File size: %d; Recieve %d; SD write %d",file_size,file_inc_size,file_size_writen);
          //Установить имя файла.
          str[0]='0';

@@ -5,6 +5,15 @@
 
 #include "../../lcd/marlinui.h"
 #include "mks_wifi_sd.h"
+#include "../../lcd/tft/qqs/qqs_wifi_diag.h"
+
+qqs_wifi_diag_t qqs_wdiag;
+
+static void qqs_diag_copy(char *dst, const char *src) {   // 27 printable chars max
+	uint8_t i = 0;
+	for (; i < 27 && src[i]; i++) dst[i] = (src[i] < 0x20 || src[i] > 0x7E) ? '?' : src[i];
+	dst[i] = 0;
+}
 
 volatile uint8_t mks_in_buffer[MKS_IN_BUFF_SIZE];
 uint8_t mks_out_buffer[MKS_OUT_BUFF_SIZE];
@@ -92,6 +101,8 @@ void mks_wifi_out_add(uint8_t *data, uint32_t size){
 			}
 			//выпихнуть в uart
 			mks_wifi_send((uint8_t *)esp_packet, packet_size);
+			qqs_wdiag.tx_lines++;
+			qqs_diag_copy(qqs_wdiag.last_out, (const char *)mks_out_buffer);
 			//очистить буфер
 			memset(mks_out_buffer,0,MKS_OUT_BUFF_SIZE);
 			//сбросить индекс
@@ -133,6 +144,7 @@ uint8_t mks_wifi_input(uint8_t data){
 		packet_index=0;
 		memset((uint8_t*)mks_in_buffer,0,MKS_IN_BUFF_SIZE);
 	}else if(!packet_start_flag){
+		qqs_wdiag.rx_stray++;
 		DEBUG("Byte not in packet %0X - [%c]",data,data);
 		return 1;
 	}
@@ -161,6 +173,7 @@ uint8_t mks_wifi_input(uint8_t data){
 	if( (packet_index >= (payload_size+4)) || (packet_index >= ESP_PACKET_DATA_MAX_SIZE) ){
 
 		if(mks_wifi_check_packet((uint8_t *)mks_in_buffer)){
+			qqs_wdiag.rx_bad++;
 			ERROR("Packet check failed");
 			packet_start_flag=0;
 			packet_index=0;
@@ -251,6 +264,7 @@ void mks_wifi_parse_packet(ESP_PROTOC_FRAME *packet){
 	static uint8_t show_ip_once=0;
 	char str[100];
 
+	if (packet->type < 5) qqs_wdiag.rx_pkt[packet->type]++; else qqs_wdiag.rx_other++;
 	switch(packet->type){
 		case ESP_TYPE_NET:
 			memset(str,0,100);
@@ -302,6 +316,8 @@ void mks_wifi_parse_packet(ESP_PROTOC_FRAME *packet){
 						if(cmd_index >= sizeof(gcode_cmd)-1){ too_long = true; continue; }
 						gcode_cmd[cmd_index++] = packet->data[i];
 					}else{
+						qqs_wdiag.last_in_i = (qqs_wdiag.last_in_i + 1) % 3;
+						qqs_diag_copy(qqs_wdiag.last_in[qqs_wdiag.last_in_i], too_long ? "(too long, dropped)" : gcode_cmd);
 						if(!too_long) GCodeQueue::ring_buffer.enqueue((const char *)gcode_cmd, false, MKS_WIFI_SERIAL_NUM);
 						too_long = false;
 						cmd_index = 0;
@@ -390,6 +406,7 @@ void mks_wifi_send(uint8_t *packet, uint16_t size){
 		while(MYSERIAL2.availableForWrite()==0){
 			hal.watchdog_refresh();
 			if(ELAPSED(millis(), t0 + 100)){
+				qqs_wdiag.tx_timeouts++;
 				error_flag=1;
 				return;
 			};
