@@ -352,14 +352,24 @@ namespace qqs {
     if (run(cmd)) cal_cur = z;
   }
 
-  // Leave the wizard. keep = values already applied stay (they were saved); otherwise restore the originals.
-  static void cal_leave(const bool restore) {
-    if (restore) {
-      cal_res.H = cal_orig_H; cal_res.R = cal_orig_R;
-      LOOP_ABC(i) cal_res.adj[i] = cal_orig_adj[i];
-      if (!run(cal_active ? "M2006 A\nM2006 S0" : "M2006 S0")) return;
-    }
+  // Heater targets from before the wizard raised them to 140/70: put back when leaving (0 = off).
+  static int16_t cal_noz0 = 0, cal_bed0 = 0;
+  static char *cal_heat_back(char *o) { sprintf_P(o, PSTR("M104 S%d\nM140 S%d"), cal_noz0, cal_bed0); return o; }
+
+  // Leave the wizard: restore the starting values (and the heaters).
+  static void cal_leave() {
+    cal_res.H = cal_orig_H; cal_res.R = cal_orig_R;
+    LOOP_ABC(i) cal_res.adj[i] = cal_orig_adj[i];
+    char h[32], cmd[64];
+    sprintf_P(cmd, cal_active ? PSTR("M2006 A\nM2006 S0\n%s") : PSTR("M2006 S0\n%s"), cal_heat_back(h));
+    if (!run(cmd)) return;
     ui.return_to_status();
+  }
+  // Back from the prep page (nothing started): heaters back, to the settings page.
+  static void cal_prep_back() {
+    char h[32];
+    if (!run(cal_heat_back(h))) return;
+    go_settings();
   }
 
   // ---- Prep ----
@@ -398,7 +408,7 @@ namespace qqs {
     if (!live(next_ms, 1000)) return;
 
     touch.clear();
-    header("手動校準", go_settings);
+    header("手動校準", cal_prep_back);
     canvas(0, HEADER_H, TFT_WIDTH, 100, C_BG);
     text(10, 4,  F_S, C_TEXT, C_BG, "1. 清乾淨噴嘴，準備一張影印紙。");
     text(10, 22, F_S, C_TEXT, C_BG, "2. 到溫後按「開始」：先歸零，再一點一點量。");
@@ -421,8 +431,10 @@ namespace qqs {
 
   void go_cal() {
     if (job_active()) { ui.set_status("列印中不能校準"); redraw(); return; }
-    if (thermalManager.degTargetHotend(0) < 140) thermalManager.setTargetHotend(140, 0);
-    if (thermalManager.degTargetBed() < 70) thermalManager.setTargetBed(70);
+    cal_noz0 = thermalManager.degTargetHotend(0);
+    cal_bed0 = thermalManager.degTargetBed();
+    if (cal_noz0 < 140) thermalManager.setTargetHotend(140, 0);
+    if (cal_bed0 < 70) thermalManager.setTargetBed(70);
     cal_hot_ms = 0;
     ui.goto_screen(cal_prep_screen);
   }
@@ -480,7 +492,7 @@ namespace qqs {
   }
   static void cal_point_back() {
     // Two taps within 3 s to give up (a phantom touch shouldn't throw the measurements away)
-    if (cal_confirm_ms && PENDING(millis(), cal_confirm_ms + 3000)) { cal_confirm_ms = 0; cal_leave(true); return; }
+    if (cal_confirm_ms && PENDING(millis(), cal_confirm_ms + 3000)) { cal_confirm_ms = 0; cal_leave(); return; }
     cal_confirm_ms = millis();
     ui.set_status("再按一次「返回」就放棄這次校準");
     redraw();
@@ -521,7 +533,7 @@ namespace qqs {
 
   // ---- Result ----
 
-  static void cal_abandon() { cal_leave(true); }
+  static void cal_abandon() { cal_leave(); }
   static void cal_again() {
     if (!cal_ok) return;
     char cmd[48];
@@ -541,7 +553,9 @@ namespace qqs {
       // After 5 failed rounds: allowed, but only with a second tap within 3 s
       if (!cal_confirm_ms || ELAPSED(millis(), cal_confirm_ms + 3000)) { cal_confirm_ms = millis(); ui.set_status("3 秒內再按一次就強制存檔"); redraw(); return; }
     }
-    if (!run("M2006 A\nM2006 S0\nM500")) return;
+    char h[32], cmd[64];
+    sprintf_P(cmd, PSTR("M2006 A\nM2006 S0\nM500\n%s"), cal_heat_back(h));
+    if (!run(cmd)) return;
     ui.set_status("校準值已套用並存檔");
     ui.return_to_status();
   }
