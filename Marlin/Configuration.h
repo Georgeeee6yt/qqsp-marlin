@@ -926,9 +926,9 @@
   #define DELTA_DIAGONAL_ROD 280.00       // (mm)
 
   // Distance between bed and nozzle Z home position
-  #define DELTA_HEIGHT 372.89             // (mm) Get this value from G33 auto calibrate
+  #define DELTA_HEIGHT 355.72             // (mm) QQS-Pro: paper-calibrated 2026-11-24 (stock "Z max length" 372.893 includes the 17.2 mm probe)
 
-  #define DELTA_ENDSTOP_ADJ { 0.0, 0.0, 0.0 } // Get these values from G33 auto calibrate
+  #define DELTA_ENDSTOP_ADJ { -0.28, 0.0, -0.39 } // QQS-Pro: paper-calibrated 2026-11-24
 
   // Horizontal distance bridged by diagonal push rods when effector is centered.
   #define DELTA_RADIUS 140.8              // (mm) Get this value from G33 auto calibrate
