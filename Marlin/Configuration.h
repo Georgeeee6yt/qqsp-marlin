@@ -141,7 +141,7 @@
 
 // QQS-Pro v3: own Traditional Chinese touch UI (Marlin/src/lcd/tft/qqs, assets from qqs_tools/gen_assets.py)
 #define QQS_UI
-#define QQS_FW_VERSION "v3.1.5"
+#define QQS_FW_VERSION "v3.1.6"
 #define XPT2046_Z1_THRESHOLD 40   // touch pressure needed (default 10): ignore weak / noise "touches"
 #define COLOR_BACKGROUND   0x18C3   // #1A1A1A, matches the QQS UI (also used by the Marlin menus)
 #define COLOR_SELECTION_BG 0x59C2   // dark orange
@@ -840,7 +840,7 @@
  * Note: For Bowden Extruders make this large enough to allow load/unload.
  */
 #define PREVENT_LENGTHY_EXTRUDE
-#define EXTRUDE_MAXLENGTH 950
+#define EXTRUDE_MAXLENGTH 1600   // QQS-Pro: long Bowden tube (load / unload / calibration in one move)
 
 //===========================================================================
 //======================== Thermal Runaway Protection =======================

@@ -457,9 +457,10 @@ namespace qqs {
   // Feeding is one long move per speed, cut short with M410, so it runs smoothly and doesn't
   // depend on the screen handler topping up a queue of small moves.
   static millis_t bc_cmd_ms = 0;
+  #define BC_MAX_MM 1500   // QQS-Pro towers are ~800 mm tall; the stock tube may well be over 900 mm
   static void bc_feed(const bool slow) {
     char cmd[48];
-    const int left = _MAX(10, 900 - int(bc_fed()));
+    const int left = _MAX(10, BC_MAX_MM - int(bc_fed()));
     sprintf_P(cmd, slow ? PSTR("M410\nM83\nG1 E%d F300") : PSTR("M410\nM83\nG1 E%d F1800"), slow ? _MIN(left, 150) : left);
     queue.inject(cmd);
     bc_slow = slow;
@@ -511,7 +512,7 @@ namespace qqs {
     if (bc_state == 1) {
       // The length is read from the stepper position, so the cut-short part of a move doesn't count.
       const bool idle = !queue.has_commands_queued() && !planner.has_blocks_queued() && ELAPSED(millis(), bc_cmd_ms + 1000);
-      if (bc_fed() > 895) { bc_stop(false); ui.set_status("送了 900 mm 還沒出料，已停止"); }
+      if (bc_fed() > BC_MAX_MM - 5) { bc_stop(false); ui.set_status("送了 1500 mm 還沒出料，已停止"); }
       else if (idle) bc_feed(bc_slow);   // a slow 150 mm leg ran out: keep going
     }
     else if (bc_state == 3 && ((!queue.has_commands_queued() && !planner.has_blocks_queued()) || ELAPSED(millis(), bc_stop_ms + 5000))) {
