@@ -164,7 +164,7 @@ void CANVAS::AddQText(int16_t x, int16_t y, const void *font, uint16_t *colors, 
 void CANVAS::AddQBitmap(int16_t x, int16_t y, const void *bitmap, uint16_t *colors) {
   const qqs_bitmap_t *b = (const qqs_bitmap_t *)bitmap;
   if (endLine < y || startLine > y + b->h) return;
-  AddImage(x, y, b->w, b->h, b->bpp == 1 ? GREYSCALE1 : GREYSCALE2, (uint8_t *)b->data, colors);
+  AddImage(x, y, b->w, b->h, b->bpp == 1 ? GREYSCALE1 : b->bpp == 2 ? GREYSCALE2 : GREYSCALE4, (uint8_t *)b->data, colors);
 }
 
 void CANVAS::AddRectangle(uint16_t x, uint16_t y, uint16_t rectangleWidth, uint16_t rectangleHeight, uint16_t color) {

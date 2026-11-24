@@ -1154,6 +1154,7 @@ void GcodeSuite::process_parsed_command(const bool no_ok/*=false*/) {
         case 2000: qqs_M2000(); break;                            // M2000: QQS-Pro pause and park
         case 2001: qqs_M2001(); break;                            // M2001: QQS-Pro resume from M2000
         case 2002: qqs_M2002(); break;                            // M2002: QQS-Pro safe lift + centre before homing
+        case 2010: qqs_M2010(); break;                            // M2010: QQS-Pro animation timing
       #endif
 
       #if ENABLED(POWER_LOSS_RECOVERY)

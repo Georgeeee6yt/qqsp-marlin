@@ -28,6 +28,7 @@
 #include "../../../module/settings.h"
 #include "../../../module/delta.h"
 #include "qqs_motion.h"
+#include "qqs_anim_data.h"
 
 #if ENABLED(BABYSTEPPING)
   #include "../../../feature/babystep.h"
@@ -785,62 +786,157 @@ namespace qqs {
     redraw();
   }
 
-  static void printing_screen() {
-    cards(TOP_H + 3, 44, true);
+  // =========================================================================
+  // Printing animation: she paints a flower along a toolpath as the print progresses
+  // (assets from qqs_tools/gen_anim.py; drawn on the status screen and ticked from tft_idle)
+  // =========================================================================
 
-    // Progress block
-    const int16_t py = TOP_H + 51, ph = 66;
-    canvas(0, py, TFT_WIDTH, ph, C_BG);
-    const char *name = card.isFileOpen() ? card.longest_filename() : "";
-    text(6, 0, F_S, C_MUTED, C_BG, name);
+  #define ANIM_X 0
+  #define ANIM_Y TOP_H
+  #define ANIM_TICK_MS 250
+
+  static uint8_t anim_tick = 0;
+  static uint8_t flower_buf[(QQS_ANIM_FLOWER_W + 1) / 2 * QQS_ANIM_FLOWER_H];
+  static const qqs_bitmap_t flower_bm = { QQS_ANIM_FLOWER_W, QQS_ANIM_FLOWER_H, 4, flower_buf };
+
+  // The flower is a loop, not a progress bar: draw it in LOOP_DRAW ticks, hold it LOOP_HOLD ticks, start over.
+  #define LOOP_DRAW 32    // 8 s at 250 ms
+  #define LOOP_HOLD 8     // 2 s
+  static uint8_t loop_pos = 0;
+
+  void anim_draw() {
+    const bool running = printingIsActive() && !stopping;
+    const uint8_t p8 = loop_pos >= LOOP_DRAW ? 254 : uint8_t(uint16_t(loop_pos) * 254 / LOOP_DRAW);
+
+    canvas(ANIM_X, ANIM_Y, QQS_ANIM_W, QQS_ANIM_H, C_BG);
+    bitmap(0, 0, qqs_anim_bg, C_ACCENT, C_BG);
+
+    // "!" marks blink off now and then
+    if (running && (anim_tick % 12) >= 10)
+      bitmap(QQS_ANIM_BANG_X, QQS_ANIM_BANG_Y, qqs_anim_bang_mask, C_BG, C_BG);
+
+    // Flower: every pixel whose toolpath order is reached is drawn (dark line on the orange canvas)
+    {
+      uint8_t *o = flower_buf;
+      const uint8_t *lv = qqs_anim_flower_lvl, *od = qqs_anim_flower_ord;
+      for (uint8_t y = 0; y < QQS_ANIM_FLOWER_H; y++) {
+        for (uint8_t x = 0; x < QQS_ANIM_FLOWER_W; x += 2) {
+          const uint8_t a = (*od++ <= p8) ? *lv : 0; lv++;
+          uint8_t b = 0;
+          if (x + 1 < QQS_ANIM_FLOWER_W) { b = (*od++ <= p8) ? *lv : 0; lv++; }
+          *o++ = uint8_t((a << 4) | b);
+        }
+      }
+      bitmap(QQS_ANIM_FLOWER_X, QQS_ANIM_FLOWER_Y, flower_bm, C_BG, C_ACCENT);
+    }
+
+    // Nozzle at the current end of the toolpath (blinks while printing)
+    if (p8 > 0 && p8 < 254 && (!running || !(anim_tick & 1))) {
+      int8_t i = -1;
+      for (uint8_t k = 0; k < QQS_ANIM_NOZZLE_N; k++) if (qqs_anim_nozzle[k].ord <= p8) i = k;
+      if (i >= 0) {
+        const int16_t nx = qqs_anim_nozzle[i].x - ANIM_X, ny = qqs_anim_nozzle[i].y;
+        fill(nx - 2, ny - 1, 5, 3, C_BG);
+        fill(nx - 1, ny - 2, 3, 5, C_BG);
+        fill(nx, ny, 1, 1, C_ACCENT);
+      }
+    }
+
+    // Steam: two wavy lines drifting up
+    for (uint8_t j = 0; j < 2; j++) {
+      const float x0 = j ? QQS_ANIM_STEAM_X1 : QQS_ANIM_STEAM_X0;
+      for (int16_t y = QQS_ANIM_STEAM_Y0; y < QQS_ANIM_STEAM_Y1; y++) {
+        const float x = x0 + QQS_ANIM_STEAM_AMP * sinf(y / QQS_ANIM_STEAM_PERIOD + anim_tick * 1.3f + j * 0.8f);
+        fill(int16_t(x) - 1, y, 2, 1, C_ACCENT);
+      }
+    }
+
+    // Arm on top, swinging a little while printing
+    static const qqs_bitmap_t * const arm_mask[3] = { &qqs_anim_arm0_mask, &qqs_anim_arm1_mask, &qqs_anim_arm2_mask };
+    static const qqs_bitmap_t * const arm_art[3]  = { &qqs_anim_arm0, &qqs_anim_arm1, &qqs_anim_arm2 };
+    static const uint8_t swing[4] = { 0, 1, 2, 1 };
+    const uint8_t f = running ? swing[anim_tick & 3] : 0;
+    bitmap(QQS_ANIM_ARM_X, QQS_ANIM_ARM_Y, *arm_mask[f], C_BG, C_BG);
+    bitmap(QQS_ANIM_ARM_X, QQS_ANIM_ARM_Y, *arm_art[f], C_ACCENT, C_BG);
+  }
+
+  // Called from MarlinUI::tft_idle(): redraw just the animation box, a few times a second.
+  void anim_idle() {
+    static millis_t next_ms = 0;
+    const millis_t now = millis();
+    if (PENDING(now, next_ms)) return;
+    if (!ui.on_status_screen() || !(job_active() || stopping)) return;
+    if (!tft.queue.is_empty()) return;                            // previous frame still being sent
+    if (printingIsActive() && planner.movesplanned() < 3) return; // planner starving: skip a frame
+    next_ms = now + ANIM_TICK_MS;
+    anim_tick++;
+    if (printingIsActive() && !stopping && ++loop_pos >= LOOP_DRAW + LOOP_HOLD) loop_pos = 0;  // frozen while paused
+    anim_draw();
+  }
+
+  // =========================================================================
+  // Printing screen
+  // =========================================================================
+
+  static void printing_screen() {
+    // Animation (left) + progress (right)
+    anim_draw();
     const uint8_t pct = ui.get_progress_percent();
-    text(4, 14, F_XL, C_TEXT, C_BG, fmt_int(pct, "%"));
-    char buf[24];
-    duration_t elapsed = print_job_timer.duration();
-    sprintf_P(buf, PSTR("已印 %s"), fmt_hm(elapsed.value));
-    text_r(TFT_WIDTH - 6, 18, F_M, C_TEXT, C_BG, buf);
-    #if ENABLED(SHOW_REMAINING_TIME)
-      const uint32_t rem = ui.get_remaining_time();
-      if (rem) sprintf_P(buf, PSTR("剩餘 %s"), fmt_hm(rem)); else strcpy(buf, "剩餘 --:--");
-      text_r(TFT_WIDTH - 6, 40, F_M, C_MUTED, C_BG, buf);
-    #endif
-    fill(6, ph - 8, TFT_WIDTH - 12, 6, QRGB(0x33, 0x33, 0x33));
-    if (pct) fill(6, ph - 8, (TFT_WIDTH - 12) * _MIN(pct, 100) / 100, 6, C_ACCENT);
+    {
+      constexpr int16_t px = QQS_ANIM_W, pw = TFT_WIDTH - QQS_ANIM_W;
+      canvas(px, TOP_H, pw, QQS_ANIM_H, C_BG);
+      text_r(pw - 6, 4, F_XL, C_TEXT, C_BG, fmt_int(pct, "%"));
+      char buf[24];
+      duration_t elapsed = print_job_timer.duration();
+      sprintf_P(buf, PSTR("已印 %s"), fmt_hm(elapsed.value));
+      text_r(pw - 6, 52, F_S, C_TEXT, C_BG, buf);
+      #if ENABLED(SHOW_REMAINING_TIME)
+        const uint32_t rem = ui.get_remaining_time();
+        if (rem) sprintf_P(buf, PSTR("剩餘 %s"), fmt_hm(rem)); else strcpy(buf, "剩餘 --:--");
+        text_r(pw - 6, 68, F_S, C_MUTED, C_BG, buf);
+      #endif
+    }
+    canvas(0, TOP_H + QQS_ANIM_H + 1, TFT_WIDTH, 6, C_BG);
+    fill(6, 0, TFT_WIDTH - 12, 5, QRGB(0x33, 0x33, 0x33));
+    if (pct) fill(6, 0, (TFT_WIDTH - 12) * _MIN(pct, 100) / 100, 5, C_ACCENT);
+
+    cards(119, 44, true);
 
     // Speed / flow / Z babystep
-    const int16_t ry = py + ph + 4;
+    constexpr int16_t ry = 167, rh = 34;
     {
-      Btn b; b.label = "速度"; b.sub = fmt_int(feedrate_percentage, "%");
+      char sb[16]; sprintf_P(sb, PSTR("速度 %d%%"), feedrate_percentage);
+      Btn b; b.label = sb; b.font = &F_S;
       if (feedrate_percentage != 100) b.border = C_WARN;
-      button(4, ry, 76, 46, b, go_speed);
+      button(4, ry, 76, rh, b, go_speed);
     }
     {
-      char fb[8]; strcpy(fb, fmt_int(planner.flow_percentage[0], "%"));
-      Btn b; b.label = "流量"; b.sub = fb;
+      char fb[16]; sprintf_P(fb, PSTR("流量 %d%%"), planner.flow_percentage[0]);
+      Btn b; b.label = fb; b.font = &F_S;
       if (planner.flow_percentage[0] != 100) b.border = C_WARN;
-      button(84, ry, 76, 46, b, go_flow);
+      button(84, ry, 76, rh, b, go_flow);
     }
     #if ENABLED(BABYSTEPPING)
       {
-        Btn m; m.icon = &qqs_i18_minus;  button(164, ry, 44, 46, m, bs_down);
-        canvas(208, ry, 64, 46, C_BG);
-        text_c(0, 3, 64, F_S, C_MUTED, C_BG, "Z 微調");
-        text_c(0, 21, 64, F_M, bs_total == 0 ? C_TEXT : C_WARN, C_BG, fmt_signed2(bs_total));
-        Btn p; p.icon = &qqs_i18_plus;   button(272, ry, 44, 46, p, bs_up);
+        Btn m; m.icon = &qqs_i18_minus;  button(164, ry, 44, rh, m, bs_down);
+        canvas(208, ry, 64, rh, C_BG);
+        text_c(0, 0, 64, F_S, C_MUTED, C_BG, "Z 微調");
+        text_c(0, 16, 64, F_S, bs_total == 0 ? C_TEXT : C_WARN, C_BG, fmt_signed2(bs_total));
+        Btn p; p.icon = &qqs_i18_plus;   button(272, ry, 44, rh, p, bs_up);
       }
     #endif
 
     // Pause / stop
-    const int16_t by = ry + 50, bh = TFT_HEIGHT - by - 3;
+    constexpr int16_t by = 205, bh = TFT_HEIGHT - by - 2;
     const bool paused = printingIsPaused();
     {
-      Btn b; b.icon = paused ? &qqs_i18_player_play : &qqs_i18_player_pause; b.label = paused ? "繼續" : "暫停";
+      Btn b; b.label = paused ? "繼續" : "暫停";
       b.enabled = !stopping && card.isFileOpen();
       if (paused) { b.fg = C_OK; b.border = C_OK; }
       button(4, by, 154, bh, b, act_pause);
     }
     {
-      Btn b; b.icon = &qqs_i18_player_stop; b.label = stopping ? "停止中…" : "停止";
+      Btn b; b.label = stopping ? "停止中…" : "停止";
       b.fg = C_STOP; b.border = C_STOP; b.enabled = !stopping;
       button(162, by, 154, bh, b, go_stop);
     }

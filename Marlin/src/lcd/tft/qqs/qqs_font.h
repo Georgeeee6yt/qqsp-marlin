@@ -23,7 +23,7 @@ typedef struct {
   const uint8_t *data;
 } qqs_font_t;
 
-// Fixed-size icon / picture. bpp is 1 or 2, same packing as glyphs.
+// Fixed-size icon / picture. bpp is 1, 2 or 4, same packing as glyphs (MSB first, rows padded).
 typedef struct {
   uint8_t w, h, bpp;
   const uint8_t *data;

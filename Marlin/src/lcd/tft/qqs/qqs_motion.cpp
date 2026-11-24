@@ -10,6 +10,8 @@
 #include "../../../module/delta.h"
 #include "../../../module/planner.h"
 #include "../../marlinui.h"
+#include "../tft.h"
+#include "qqs_ui.h"
 
 #if ENABLED(ADVANCED_PAUSE_FEATURE)
   #include "../../../feature/pause.h"
@@ -105,6 +107,22 @@ void qqs_M2002() {
     prepare_internal_move_to_destination(50);
     planner.synchronize();
   }
+}
+
+/**
+ * M2010: time the printing animation. Draws 20 frames and reports the average time per frame
+ * (building the frame + rendering it to the screen), which is the CPU the main loop spends on
+ * every animation tick.
+ */
+void qqs_M2010() {
+  const uint32_t t0 = micros();
+  for (uint8_t i = 0; i < 20; i++) {
+    qqs::anim_draw();
+    tft.queue.sync();
+  }
+  const uint32_t us = (micros() - t0) / 20;
+  SERIAL_ECHOLNPGM("QQS anim frame: ", us, " us");
+  ui.refresh(LCDVIEW_CLEAR_CALL_REDRAW);
 }
 
 void qqs_M2001() {

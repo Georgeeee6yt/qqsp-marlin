@@ -26,7 +26,8 @@ namespace qqs {
 
 void qqs_M2000();
 void qqs_M2001();
-void qqs_M2002();   // Stop: lift up to 5 mm (never past the reachable top), centre if the path is clear
+void qqs_M2002();
+void qqs_M2010();   // time the printing animation (average µs per frame)   // Stop: lift up to 5 mm (never past the reachable top), centre if the path is clear
 
 #if ENABLED(ADVANCED_PAUSE_FEATURE)
   // In pause.cpp (needs its private resume_position)

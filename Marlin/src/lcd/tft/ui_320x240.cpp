@@ -60,6 +60,8 @@ void MarlinUI::tft_idle() {
     }
   #endif
 
+  TERN_(QQS_UI, qqs::anim_idle());
+
   tft.queue.async();
 
   TERN_(TOUCH_SCREEN, if (tft.queue.is_empty()) touch.idle()); // Touch driver is not DMA-aware, so only check for touch controls after screen drawing is completed
