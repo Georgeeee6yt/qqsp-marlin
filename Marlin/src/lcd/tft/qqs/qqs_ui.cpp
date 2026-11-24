@@ -809,7 +809,7 @@ namespace qqs {
   // Settings page, machine info, restore defaults
   // =========================================================================
 
-  static void set_save() { ui.set_status(settings.save() ? "已存檔" : "存檔失敗"); redraw(); }
+  static void set_save() { save_feedback(settings.save()); }
   void go_settings() { ui.goto_screen(settings_screen); }
 
   static void info_screen() {
@@ -863,11 +863,12 @@ namespace qqs {
   static void go_marlin()    { ui.goto_screen(menu_main); }
 
   static void settings_screen() {
-    if (!ui.should_draw()) return;
+    static millis_t next_ms = 0;
+    save_feedback_poll();
+    if (!live(next_ms, 60000)) return;     // kept alive so the save feedback can time out
     touch.clear();
     header("設定", go_home_screen);
-    { Btn b; b.label = "存檔"; b.bg = C_BAR; b.border = C_ACCENT; b.fg = C_ACCENT;
-      button(258, 3, 58, HEADER_H - 7, b, set_save); }
+    save_button(258, 3, 58, HEADER_H - 7, set_save);
 
     struct Tile { const qqs_bitmap_t *icon; const char *label; const char *sub; screenFunc_t cb; };
     static const Tile tiles[12] = {

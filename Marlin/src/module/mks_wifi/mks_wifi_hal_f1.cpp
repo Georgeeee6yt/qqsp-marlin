@@ -42,6 +42,11 @@ void mks_wifi_hw_prepare(unsigned int buf, unsigned int count){
    USART1->SR = 0;
    USART1->CR1 |= USART_CR1_RE;
 
+   // QQS-Pro HiSpeed: nothing else turns DMA1 on (on the Robin Nano something did), and with its clock off
+   // the channel registers read 0 and nothing is ever moved: the upload timed out with USART1 overrun.
+   RCC->AHBENR |= RCC_AHBENR_DMA1EN;
+   (void)RCC->AHBENR;
+
    DMA1_Channel5->CCR = DMA_CONF;
    DMA1_Channel5->CPAR = (uint32_t)&USART1->DR;
    DMA1_Channel5->CMAR = (uint32_t)buf;   //dma_buff[dma_buff_index];

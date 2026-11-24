@@ -31,6 +31,10 @@ namespace qqs {
   void open_bs_prompt(const float total);   // end of a print with Z babystepping: offer to keep it
   void info_tabs(const uint8_t tab);        // tab strip under the header on the info pages: 0 info, 1 sensors, 2 Wi-Fi
   void go_wifi();
+  // Save button with its own feedback (pages without a status line)
+  void save_feedback(const bool ok);
+  void save_feedback_poll();
+  void save_button(const int16_t x, const int16_t y, const int16_t w, const int16_t h, screenFunc_t cb, const bool enabled = true);
   void sensor_poll();                       // from tft_idle: count endstop edges while the sensor page is open
   void go_term();
   void go_pid();

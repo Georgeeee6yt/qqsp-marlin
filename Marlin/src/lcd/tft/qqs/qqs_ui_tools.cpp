@@ -692,11 +692,30 @@ namespace qqs {
   // Shared: save button in the header, on/off pill
   // =========================================================================
 
-  static void hdr_save() { if (run("M500")) ui.set_status("已存檔"); redraw(); }
-  static void header_save(const char *title, screenFunc_t back) {
+  // Settings sub-pages have no status line, so a save is confirmed on the button itself:
+  // green "已存" (or red "失敗") for 2 s plus a beep.
+  static millis_t save_fb_ms = 0;
+  static bool save_fb_ok = true;
+  void save_feedback(const bool ok) {
+    save_fb_ms = millis(); save_fb_ok = ok;
+    #if HAS_BUZZER
+      if (ok) BUZZ(40, 2400); else { BUZZ(150, 600); }
+    #endif
+    redraw();
+  }
+  void save_feedback_poll() { if (save_fb_ms && ELAPSED(millis(), save_fb_ms + 2000)) { save_fb_ms = 0; redraw(); } }
+  void save_button(const int16_t x, const int16_t y, const int16_t w, const int16_t h, screenFunc_t cb, const bool enabled) {
+    Btn b; b.bg = C_BAR; b.enabled = enabled;
+    if (save_fb_ms) { b.label = save_fb_ok ? "已存" : "失敗"; b.fg = b.border = save_fb_ok ? C_OK : C_STOP; }
+    else            { b.label = "存檔"; b.fg = b.border = C_ACCENT; }
+    button(x, y, w, h, b, cb);
+  }
+
+  // M500 through the queue, so it runs after anything just injected (M92, M412, ...)
+  static void hdr_save() { save_feedback(run("M500")); }
+  static void header_save(const char *title, screenFunc_t back, const bool can_save = true) {
     header(title, back);
-    Btn b; b.label = "存檔"; b.bg = C_BAR; b.border = C_ACCENT; b.fg = C_ACCENT;
-    button(258, 3, 58, HEADER_H - 7, b, hdr_save);
+    save_button(258, 3, 58, HEADER_H - 7, hdr_save, can_save);
   }
   static void pill(const int16_t x, const int16_t y, const bool on, screenFunc_t cb) {
     Btn b; b.label = on ? "開" : "關";
@@ -726,15 +745,18 @@ namespace qqs {
   static void pid_screen() {
     static millis_t next_ms = 0;
     ui.defer_status_screen();
+    save_feedback_poll();
     if ((pid_state == 1 || pid_state == 2) && ELAPSED(millis(), pid_ms + 2000) && queue_idle()) {
       pid_state = 3;
-      ui.set_status("調校完成，已套用；要保留請按存檔");
+      #if HAS_BUZZER
+        BUZZ(200, 2000);
+      #endif
       redraw();
     }
     if (!live(next_ms, 1000)) return;
 
     touch.clear();
-    header_save("PID 調整", go_settings);
+    header_save("PID 調整", go_settings, !(pid_state == 1 || pid_state == 2));
     canvas(0, HEADER_H, TFT_WIDTH, 140, C_BG);
     char v[64], a[16], b[16], c[16];
     #if ENABLED(PIDTEMP)
@@ -754,6 +776,10 @@ namespace qqs {
       sprintf_P(v, PSTR("調校中…　噴頭 %d°　熱床 %d°"), thermalManager.wholeDegHotend(0), thermalManager.wholeDegBed());
       text(10, 70, F_M, C_WARN, C_BG, v);
       text(10, 96, F_S, C_MUTED, C_BG, "加熱、冷卻來回 8 次，算好會自動套用。");
+    }
+    else if (pid_state == 3) {
+      text(10, 70, F_M, C_OK, C_BG, "調校完成，新值已套用");
+      text(10, 96, F_S, C_MUTED, C_BG, "要保留請按右上角「存檔」。");
     }
     else {
       text(10, 70, F_S, C_MUTED, C_BG, "噴頭用 220°、熱床用 60° 調校，跟平常列印的溫度接近。");
@@ -796,6 +822,7 @@ namespace qqs {
   static void params_screen() {
     static millis_t next_ms = 0;
     ui.defer_status_screen();
+    save_feedback_poll();
     if (!live(next_ms, 1000)) return;
 
     touch.clear();
@@ -849,6 +876,7 @@ namespace qqs {
   static void toggles_screen() {
     static millis_t next_ms = 0;
     ui.defer_status_screen();
+    save_feedback_poll();
     if (!live(next_ms, 1000)) return;
 
     touch.clear();
