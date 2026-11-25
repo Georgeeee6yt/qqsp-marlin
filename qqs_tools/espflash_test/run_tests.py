@@ -112,7 +112,14 @@ run('no_sync', 'fw', {'ESPSTUB.BIN': stub, 'MksWifi.bin': mks}, flash, faults=['
 run('boot_noise_with_C0', 'fw', {'ESPSTUB.BIN': stub, 'MksWifi.bin': mks}, flash, faults=['noise'], check=chk_fw)
 run('baud_921600_fails_falls_back', 'fw', {'ESPSTUB.BIN': stub, 'MksWifi.bin': mks}, flash, faults=['deaf921600'],
     check=lambda d, out, kv: chk_fw(d, out, kv) or (None if kv['baud'] == '460800' else 'baud %s' % kv['baud']))
-run('read_bitflip_on_wire', 'backup', {'ESPSTUB.BIN': stub}, flash, faults=['readflip'], expect_err=14)
+rb = lambda n: (lambda d, out, kv: chk_backup('ESPBAK.BIN')(d, out, kv) or (None if int(kv['retries']) >= n else 'retries %s' % kv['retries']))
+run('read_bitflip_reread', 'backup', {'ESPSTUB.BIN': stub}, flash, faults=['readflip'], check=rb(1))
+run('read_bitflip_always', 'backup', {'ESPSTUB.BIN': stub}, flash, faults=['readflipalways'], expect_err=14)
+run('read_lost_end_c0', 'backup', {'ESPSTUB.BIN': stub}, flash, faults=['dropend'], check=rb(1))
+run('read_lost_byte', 'backup', {'ESPSTUB.BIN': stub}, flash, faults=['dropbyte'], check=rb(1))
+run('read_lost_packet', 'backup', {'ESPSTUB.BIN': stub}, flash, faults=['droppacket'], check=rb(1))
+run('read_lost_ack', 'backup', {'ESPSTUB.BIN': stub}, flash, faults=['dropack'], check=rb(1))
+run('read_all_four_losses', 'backup', {'ESPSTUB.BIN': stub}, flash, faults=['dropend', 'dropbyte', 'droppacket', 'dropack', 'readflip'], check=rb(5))
 run('write_error_reported_late', 'fw', {'ESPSTUB.BIN': stub, 'MksWifi.bin': mks}, flash, faults=['writeerr'], expect_err=11,
     check=lambda d, out, kv: None if kv['code'] == '0xc400' else 'code %s' % kv['code'])
 run('flash_content_wrong_md5', 'fw', {'ESPSTUB.BIN': stub, 'MksWifi.bin': mks}, flash, faults=['badmd5'], expect_err=14,

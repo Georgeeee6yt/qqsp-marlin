@@ -53,6 +53,7 @@ struct EspfStatus {
   uint8_t err;          // EspfErr, EE_NONE = ok so far
   uint16_t err_code;    // status code from the ESP for EE_CMD
   uint8_t reported;     // after the reboot: 1 = the module sent a status packet
+  uint8_t retries;      // backup: times the read was resumed after a lost / bad packet
   uint32_t done, total; // bytes for the transfer stage
   uint32_t bps;         // bytes / s in the transfer stage
   uint32_t baud;        // link speed reached
@@ -87,6 +88,7 @@ bool espf_hal_fopen_read(const char *name);
 bool espf_hal_fopen_write(const char *name);             // create new
 int  espf_hal_fread(uint8_t *p, const uint16_t n);       // bytes read, -1 error
 bool espf_hal_fwrite(const uint8_t *p, const uint16_t n);
+bool espf_hal_ftrunc(const uint32_t size);              // cut the open file back to size, continue writing there
 void espf_hal_fclose();
 bool espf_hal_rename(const char *from, const char *to);  // replaces "to"
 uint16_t espf_hal_net_reports();               // status packets parsed by mks_wifi so far

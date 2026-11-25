@@ -787,8 +787,9 @@ namespace qqs {
 
     // link (bottom of the right panel)
     if (espf.flash_size) {
-      sprintf_P(v, PSTR("%lu bps"), (unsigned long)espf.baud);
-      text(0, 112, F_S, C_DIM, C_BG, v);
+      if (espf.retries) sprintf_P(v, PSTR("%lu bps　重讀 %u 次"), (unsigned long)espf.baud, espf.retries);   // drawn with F_S
+      else sprintf_P(v, PSTR("%lu bps"), (unsigned long)espf.baud);
+      text(0, 112, F_S, espf.retries ? C_WARN : C_DIM, C_BG, v);
       sprintf_P(v, PSTR("快閃 %lu MB（%06lX）"), (unsigned long)(espf.flash_size >> 20), (unsigned long)espf.flash_id);
       text(0, 128, F_S, C_DIM, C_BG, v);
     }

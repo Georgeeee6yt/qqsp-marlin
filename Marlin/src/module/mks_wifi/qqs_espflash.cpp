@@ -13,6 +13,9 @@
  *    FLASH_END 04 (1 = stay), SPI_FLASH_MD5 13 (addr, size, 0, 0) -> 16 raw bytes,
  *    READ_FLASH D2 (addr, size, packet, inflight): the stub sends data frames, waits for an ACK frame
  *    holding the total received (le32) after each (one in flight), then sends the 16-byte MD5.
+ *    It waits for the ACK without a timeout; an ACK frame that is not 4 bytes long ends the loop early
+ *    (it still sends the MD5 of what it sent) and the stub is back to taking commands. We use that to
+ *    resume after a lost / damaged packet: abort, drop what is in the pipe, READ_FLASH from where we are.
  *  - Flash ID: SPI "user command" 0x9F through READ_REG 0A / WRITE_REG 09 on the ESP8266 SPI block
  *    (esptool run_spiflash_command); size = 1 << (id >> 16).
  *  - esp-flasher-stub writes after answering FLASH_DATA: a write error shows up on the NEXT command,
@@ -199,7 +202,8 @@ static bool write_reg(const uint32_t addr, const uint32_t v) { return cmd4(0x09,
 
 enum : uint8_t {
   S_IDLE, S_OPEN, S_RESET, S_RESET2, S_SYNC, S_STUB, S_OHAI, S_BAUD, S_BAUD2, S_FLASHID,
-  S_ERASE, S_ERASE_WAIT, S_WRITE_BEGIN, S_WRITE, S_MD5, S_MD5_WAIT, S_READ_BEGIN, S_READ, S_BAKCHK,
+  S_ERASE, S_ERASE_WAIT, S_WRITE_BEGIN, S_WRITE, S_MD5, S_MD5_WAIT, S_READ_BEGIN, S_READ_CMD, S_READ,
+  S_READ_ABORT, S_BAKCHK,
   S_REBOOT, S_REBOOT_WAIT, S_DONE
 };
 
@@ -211,6 +215,10 @@ static uint16_t blk;
 static bool owns = false, sd_on = false, f_on = false, waiting = false;
 static uint16_t rep0;
 static Md5 md;
+static Md5 md_seg;                   // backup: the current READ_FLASH (resumes start a new one)
+static uint32_t seg0, seg_end;        // backup: the current READ_FLASH (at most READ_SEG bytes)
+#define READ_SEG 0x40000              // 256 KB per READ_FLASH: a damaged packet costs at most this again
+#define READ_RESUMES 8
 static const char *img_name;
 static uint8_t md5_ours[16];
 
@@ -261,6 +269,16 @@ static bool open_image() {
   if (!espf_hal_fopen_read(img_name)) { fail(EE_SDWRITE); return false; }
   f_on = true;
   return true;
+}
+
+// Backup: a packet went missing / came short / the part's MD5 differs. End the stub's READ_FLASH loop
+// with a non-4-byte "ACK" and start a new READ_FLASH at pos (abort = false: the stub already finished).
+static void read_resume(const uint8_t why, const bool abort = true) {
+  if (++espf.retries > READ_RESUMES) return fail(why);
+  if (abort) { espf_hal_uart_write(0xC0); espf_hal_uart_write(0x00); espf_hal_uart_write(0xC0); }
+  rx_in = rx_esc = rx_over = false; rx_len = 0;
+  espf.done = pos;
+  go(S_READ_ABORT);
 }
 
 void espf_poll() {
@@ -512,44 +530,67 @@ void espf_poll() {
       return;
     }
 
-    // ---- backup: READ_FLASH, one packet per call ----
-    case S_READ_BEGIN: {
+    // ---- backup: READ_FLASH, one packet per call; resumed where it stopped if a packet is lost ----
+    case S_READ_BEGIN:
       if (!espf_hal_fopen_write(espf.file)) return fail(EE_SDWRITE);
       f_on = true;
-      md5_init(md);
       pos = 0;
       img_size = espf.total = espf.flash_size;
-      if (!cmd4(0xD2, 0, img_size, blk, 1)) return;
       t_xfer = espf_hal_ms();
+      go(S_READ_CMD);
+      return;
+
+    case S_READ_CMD: {                      // READ_FLASH from pos to the end
+      seg0 = pos;
+      seg_end = (img_size - pos) > READ_SEG ? pos + READ_SEG : img_size;
+      md5_init(md_seg);
+      rx_reset();
+      {
+        uint8_t p[16]; put32(p, pos); put32(p + 4, seg_end - pos); put32(p + 8, blk); put32(p + 12, 1);
+        if (!cmd(0xD2, p, 16, 3000, 0, nullptr, 0, 0, true)) {
+          if (espf.err) return;               // the stub answered with an error status: fail() done
+          return read_resume(EE_TIMEOUT, false);
+        }
+      }
       go(S_READ);
-    } __attribute__((fallthrough));   // the first packet follows the answer at once
+    } __attribute__((fallthrough));         // the first packet follows the answer at once
     case S_READ: {
-      if (pos) send_ack(pos);              // the ESP sends the next packet only after this
-      if (pos >= img_size) {               // after the last ACK comes the MD5 of everything sent
-        const int16_t n = rx_frame(3000);
-        if (n < 0) return fail(EE_TIMEOUT);
-        if (n != 16) return fail(EE_DATA);
-        md5_final(md, md5_ours);
-        if (memcmp(RXB, md5_ours, 16)) return fail(EE_MD5);   // what we got = what the ESP read
+      if (pos > seg0) send_ack(pos - seg0);   // the ESP sends the next packet only after this
+      if (pos >= seg_end) {                // after the last ACK comes the MD5 of this READ_FLASH
+        const int16_t n = rx_frame(1500);
+        if (n != 16) return read_resume(n < 0 ? EE_TIMEOUT : EE_DATA);
+        uint8_t m[16];
+        md5_final(md_seg, m);
+        if (memcmp(RXB, m, 16)) {           // a damaged byte with the right length: read this part again
+          if (!espf_hal_ftrunc(seg0)) return fail(EE_SDWRITE);
+          pos = seg0;
+          return read_resume(EE_MD5, false);   // the stub is already back to commands
+        }
+        if (pos < img_size) { go(S_READ_CMD); return; }   // next segment
         close_file();
         set_stage(EST_VERIFY);
         if (!espf_hal_fopen_read(espf.file)) return fail(EE_SDWRITE);
         f_on = true;
         md5_init(md); pos = 0;
-        go(S_BAKCHK);                       // and what is on the card = what we got
+        go(S_BAKCHK);                       // file on the card, then its MD5 against the whole chip
         return;
       }
       // receive the whole packet now: the UART buffer is small and the ESP is already sending
-      const int16_t n = rx_frame(3000);
-      if (n < 0) return fail(EE_TIMEOUT);
-      const uint32_t want = (img_size - pos) > blk ? blk : img_size - pos;
-      if (uint32_t(n) != want) return fail(EE_DATA);
-      md5_update(md, RXB, n);
+      const int16_t n = rx_frame(1500);
+      const uint32_t want = (seg_end - pos) > blk ? blk : seg_end - pos;
+      if (n < 0 || uint32_t(n) != want) return read_resume(n < 0 ? EE_TIMEOUT : EE_DATA);
+      md5_update(md_seg, RXB, n);
       if (!espf_hal_fwrite(RXB, n)) return fail(EE_SDWRITE);
       pos += n;
       xfer_progress();
       return;                               // ACK at the start of the next call
     }
+
+    case S_READ_ABORT:                      // drop whatever the stub still sends (its MD5), then go on
+      if (espf_hal_uart_read() >= 0) { t_ms = now; return; }
+      if (now - t_ms < 300) return;
+      go(S_READ_CMD);
+      return;
 
     case S_BAKCHK: {                      // read the backup file back, 4 KB per call
       const uint16_t n = (img_size - pos) > 4096 ? 4096 : uint16_t(img_size - pos);
@@ -559,11 +600,10 @@ void espf_poll() {
         pos += n;
         return;
       }
-      uint8_t m[16];
-      md5_final(md, m);
-      if (memcmp(m, md5_ours, 16)) return fail(EE_SDWRITE);
+      md5_final(md, md5_ours);              // what is on the card ...
       close_file();
-      go(S_REBOOT);
+      addr = 0;                             // ... against the ESP's MD5 of the whole chip
+      go(S_MD5);
       return;
     }
 

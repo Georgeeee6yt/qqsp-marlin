@@ -85,6 +85,11 @@ def read_frame(timeout=5.0):
         feed(os.read(master, 65536))
     return frames.pop(0)
 
+_once = set()
+def once(k):
+    if k in _once: return False
+    _once.add(k); return True
+
 def boot_app():
     # MKS status packet (type 0): ip 192.168.1.117, port 8080, connected, STA, ssid, key
     ss, key = b'TestNet', b'pass1234'
@@ -216,17 +221,31 @@ def handle(f):
         off, size, pk, inflight = struct.unpack('<IIII', d)
         if pk > 4096 or (size and not pk): resp(op, 0, b'', 0xC000); return
         ok()
-        sent = 0; flipped = False
+        stats['readcmds'] = stats.get('readcmds', 0) + 1
+        sent = 0; h = hashlib.md5()
         while sent < size:
             chunk = bytes(flash[off + sent:off + sent + min(pk, size - sent)])
-            if 'readflip' in a.fault and not flipped and sent >= 8192:
-                chunk = bytearray(chunk); chunk[100] ^= 1; chunk = bytes(chunk); flipped = True
-            slip(chunk); sent += len(chunk); stats['reads'] += 1
-            ack = read_frame(5)                          # one packet in flight (esp-flasher-stub 2.0.0)
-            if ack is None or len(ack) != 4: L('no ack', ack); return
+            at = off + sent
+            h.update(chunk)                              # the stub hashes what it reads
+            wire = chunk
+            if 'readflip' in a.fault and 8192 <= at and once('readflip'):
+                wire = bytearray(chunk); wire[100] ^= 1; wire = bytes(wire)
+            if 'readflipalways' in a.fault and at == 8192:
+                wire = bytearray(chunk); wire[100] ^= 1; wire = bytes(wire)
+            enc = b'\xc0' + wire.replace(b'\xdb', b'\xdb\xdd').replace(b'\xc0', b'\xdb\xdc') + b'\xc0'
+            if 'dropend' in a.fault and at >= 0x40000 and once('dropend'): enc = enc[:-1]          # lost closing C0
+            elif 'dropbyte' in a.fault and at >= 0x50000 and once('dropbyte'): enc = enc[:1000] + enc[1001:]
+            elif 'droppacket' in a.fault and at >= 0x60000 and once('droppacket'): enc = b''
+            w(enc); sent += len(chunk); stats['reads'] += 1
+            while True:
+                ack = read_frame(30)                     # the real stub waits without a timeout
+                if ack is None: L('no ack'); return
+                if 'dropack' in a.fault and off + sent >= 0x70000 and len(ack) == 4 and once('dropack'): continue
+                break
+            if len(ack) != 4: L('short ack: abort at', sent); break      # esp-flasher-stub: ends the loop
             got = struct.unpack('<I', ack)[0]
             if got != sent: L('ack mismatch', got, sent); return
-        slip(hashlib.md5(flash[off:off + size]).digest())
+        slip(h.digest())                                 # MD5 of what was sent (also after an abort)
     else:
         resp(op, 0, b'', 0xC300)
 

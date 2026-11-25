@@ -58,6 +58,7 @@ bool espf_hal_fopen_read(const char *name) { if (f) abort(); std::string p = fin
 bool espf_hal_fopen_write(const char *name) { if (f) abort(); if (!find(name).empty()) return false; f = fopen((sd + "/" + name).c_str(), "wb"); return f; }
 int espf_hal_fread(uint8_t *p, const uint16_t n) { return f ? (int)fread(p, 1, n, f) : -1; }
 bool espf_hal_fwrite(const uint8_t *p, const uint16_t n) { return f && fwrite(p, 1, n, f) == n; }
+bool espf_hal_ftrunc(const uint32_t size) { return f && fflush(f) == 0 && ftruncate(fileno(f), size) == 0 && fseek(f, size, SEEK_SET) == 0; }
 void espf_hal_fclose() { if (f) fclose(f); f = nullptr; }
 bool espf_hal_rename(const char *from, const char *to) {
   std::string a = find(from), b = find(to); if (a.empty()) return false;
@@ -84,9 +85,9 @@ int main(int argc, char **argv) {
     if (espf.stage != last) { last = espf.stage; fprintf(stderr, "  [%5u ms] stage %s\n", espf_hal_ms() - t0, stages[last]); }
     usleep(200);                       // the rest of Marlin's idle loop
   }
-  printf("RESULT op=%s err=%u code=%#x stage=%s baud=%u flash=%u id=%06x done=%u/%u bps=%u reported=%u file=%s sd_balanced=%d tx=%lu\n",
+  printf("RESULT op=%s err=%u code=%#x stage=%s baud=%u flash=%u id=%06x done=%u/%u bps=%u retries=%u reported=%u file=%s sd_balanced=%d tx=%lu\n",
          op.c_str(), espf.err, espf.err_code, stages[espf.stage], espf.baud, espf.flash_size, espf.flash_id,
-         espf.done, espf.total, espf.bps, espf.reported, espf.file, sd_opens == 0, tx_bytes);
+         espf.done, espf.total, espf.bps, espf.retries, espf.reported, espf.file, sd_opens == 0, tx_bytes);
   uint8_t m[16]; espf_md5((const uint8_t *)"abc", 3, m);
   printf("md5(abc)=");
   for (int i = 0; i < 16; i++) printf("%02x", m[i]);

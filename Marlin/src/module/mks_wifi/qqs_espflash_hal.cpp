@@ -58,6 +58,7 @@ bool espf_hal_fopen_read(const char *name)  { return f_open(&upload_file, P(name
 bool espf_hal_fopen_write(const char *name) { return f_open(&upload_file, P(name), FA_CREATE_NEW | FA_WRITE) == FR_OK; }
 int espf_hal_fread(uint8_t *p, const uint16_t n) { UINT br; return f_read(&upload_file, p, n, &br) == FR_OK ? int(br) : -1; }
 bool espf_hal_fwrite(const uint8_t *p, const uint16_t n) { UINT bw; return f_write(&upload_file, p, n, &bw) == FR_OK && bw == n; }
+bool espf_hal_ftrunc(const uint32_t size) { return f_lseek(&upload_file, size) == FR_OK && f_truncate(&upload_file) == FR_OK; }
 void espf_hal_fclose() { f_close(&upload_file); }
 bool espf_hal_rename(const char *from, const char *to) {
   char a[32]; strcpy(a, P(from));

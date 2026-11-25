@@ -35,6 +35,25 @@ def put(cv_,cm,outline=True):
     c,m=cm
     if outline: cv_[ndimage.binary_dilation(m)&~m]=0
     cv_[m]=c[m]
+def _arm_back(base):
+    """George 2026-11-25: the hand floated. The base picture ends the arm in an empty sleeve ring and the hand part
+    is only the fist, so the forearm was in neither. Take the sleeve from the composite (where it differs from the
+    base, around the arm only: the beaker stands elsewhere in the composite), and fill under the fist and rod with
+    sleeve / background so nothing breaks when they turn round the wrist."""
+    box=np.zeros(base.shape,np.uint8)
+    cv2.fillPoly(box,[np.array([(786,640),(786,470),(830,432),(906,432),(906,503),(864,506),(864,640)],np.int32)],1)
+    box=box.astype(bool)
+    D=ndimage.binary_dilation((np.abs(c2-base)>0.5)&box,iterations=4)&box
+    lab,_=ndimage.label(D); R=lab==lab[520,820]
+    lab2,_=ndimage.label((c2>0.5)&R); sleeve=ndimage.binary_fill_holes(lab2==lab2[530,820])
+    hx,hy,hs=POS['hand']; _,mh=place_full(*PARTS['hand'],hx,hy,hs)
+    rx,ry,rs=POS['rod']; _,mr=place_full(*PARTS['rod'],rx,ry,rs)
+    mov=ndimage.binary_dilation((mh>0.5)|(mr>0.5),iterations=3)
+    under=ndimage.binary_erosion(mh>0.5,iterations=4)
+    b=base.copy(); b[R]=c2[R]
+    b[R&mov]=0.0; b[R&(under|(sleeve&mov))]=1.0
+    return b
+base=_arm_back(base)
 BASE=down(base,np.ones_like(base))[0]
 def frame(ahoge=0.0, ang=0.0, flame=None, flip=False, steam=None, s1=1.0, s2=1.0):
     """flame: size 0..1 or None; steam: rise phase 0..1 or None; s1/s2: star sizes"""
