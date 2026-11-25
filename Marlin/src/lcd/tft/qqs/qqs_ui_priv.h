@@ -40,4 +40,7 @@ namespace qqs {
   void go_pid();
   void go_params();
   void go_toggles();
+  // qqs_ui_probe.cpp (v3.3)
+  void go_probe();
+  void go_mesh();
 }

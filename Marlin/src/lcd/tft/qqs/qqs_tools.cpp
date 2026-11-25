@@ -16,6 +16,9 @@
 #include "../../../module/settings.h"
 #include "../../../gcode/gcode.h"
 #include "../../../gcode/parser.h"
+#include "../../../module/probe.h"
+#include "../../../feature/bedlevel/bedlevel.h"
+#include "../../marlinui.h"
 #if HAS_BED_PROBE
   #include "../../../module/probe.h"
 #endif
@@ -293,6 +296,94 @@ void qqs_M2006() {
   // Plain Z adjust
   if (z > current_position.z && qqs_settings.one_way_approach) do_blocking_move_to_z(z + 0.2f, 5);
   do_blocking_move_to_z(z, 5);
+}
+
+// ===========================================================================
+// M2007: v3.3 probe tools
+// ===========================================================================
+
+namespace qqs { ProbeJob pj; }
+float qqs_g33_sd = NAN;   // set by G33 when it reports "Calibration OK"
+
+static void pj_begin(const char kind) {
+  pj.kind = kind; pj.ok = false; pj.done = false; pj.running = true;
+  pj.start_ms = millis(); pj.end_ms = 0;
+}
+static void pj_end(const bool ok) {
+  pj.ok = ok; pj.running = false; pj.done = true; pj.end_ms = millis();
+}
+
+void qqs_M2007() {
+  planner.synchronize();
+
+  if (parser.seen('R')) {                       // repeatability at the centre
+    pj_begin('R');
+    pj.n = constrain(parser.value_byte() ?: 10, 2, PRB_MAX);
+    pj.i = 0;
+    if (!all_axes_homed()) gcode.process_subcommands_now(F("G28"));
+    bool ok = true;
+    for (uint8_t k = 0; k < pj.n; k++) {
+      const float z = probe.probe_at_point(0, 0, k + 1 < pj.n ? PROBE_PT_RAISE : PROBE_PT_STOW, 0, true, false);
+      if (isnan(z)) { ok = false; probe.stow(); break; }
+      pj.z[k] = z; pj.i = k + 1;
+    }
+    pj_end(ok);
+    return;
+  }
+
+  if (parser.seen_test('P')) {                  // probe height, step 1
+    pj_begin('P');
+    cal_frame(true);
+    gcode.process_subcommands_now(F("G28"));
+    pj.measured = probe.probe_at_point(0, 0, PROBE_PT_STOW, 0, true, false);
+    const bool ok = !isnan(pj.measured);
+    if (ok) {
+      do_blocking_move_to_z(_MAX(current_position.z, 5.0f), 10);
+      do_blocking_move_to_xy(0, 0, 80);
+      do_blocking_move_to_z(1.0f, 5);          // paper test starts 1 mm above the centre
+    }
+    pj_end(ok);
+    return;
+  }
+
+  if (parser.seen_test('C')) {                  // delta auto calibration
+    pj_begin('C');
+    pj.oldH = delta_height; pj.oldR = delta_radius;
+    LOOP_ABC(i) { pj.old_adj[i] = delta_endstop_adj[i]; pj.old_ang[i] = delta_tower_angle_trim[i]; }
+    pj.sd[0] = 0;
+    pj.had_mesh = bedlevel.has_mesh();
+    const uint8_t pts = parser.byteval('P', 3);
+    cal_frame(true);
+    char cmd[16];
+    sprintf_P(cmd, PSTR("G33 P%u"), constrain(pts, 2, 10));
+    qqs_g33_sd = NAN;
+    gcode.process_subcommands_now(cmd);
+    const bool ok = !isnan(qqs_g33_sd);          // G33 got to "Calibration OK" (probe failures return before)
+    if (ok) { const uint32_t u = uint32_t(constrain(lroundf(qqs_g33_sd * 1000.0f), 0L, 99999L)); sprintf_P(pj.sd, PSTR("%u.%03u"), unsigned(u / 1000) % 100, unsigned(u % 1000)); }
+    cal_frame(false);                           // put the layer offset back into the new H
+    pj.newH = delta_height; pj.newR = delta_radius;
+    LOOP_ABC(i) { pj.new_adj[i] = delta_endstop_adj[i]; pj.new_ang[i] = delta_tower_angle_trim[i]; }
+    gcode.process_subcommands_now(F("G28"));
+    pj_end(ok);
+    return;
+  }
+
+  if (parser.seen_test('U')) {                  // undo the last calibration: G33 also cleared the mesh, so reload everything
+    settings.load();
+    gcode.process_subcommands_now(F("G28"));
+    return;
+  }
+
+  if (parser.seen_test('M')) {                  // bilinear mesh
+    pj_begin('M');
+    cal_frame(true);
+    gcode.process_subcommands_now(F("G28\nG29"));
+    cal_frame(false);
+    const bool ok = bedlevel.has_mesh() && planner.leveling_active;
+    gcode.process_subcommands_now(F("G28"));     // leveling stays on (RESTORE_LEVELING_AFTER_G28)
+    pj_end(ok);
+    return;
+  }
 }
 
 #endif // QQS_UI

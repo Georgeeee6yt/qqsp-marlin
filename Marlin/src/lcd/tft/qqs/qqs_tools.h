@@ -12,6 +12,16 @@
  *   M2006 Z<z>            Move to Z (>= -2). Going up with "one-way approach" on: overshoot 0.2 and come down.
  *   M2006 R<i> Z<z>       Re-home, back to point i at z+1, then slowly down to z.
  *   M2006 A               Apply qqs::cal_res (H, endstop adjustments, radius), then G28.
+ *
+ * v3.3 probe tools (probe = FIX_MOUNTED + PAUSE_BEFORE_DEPLOY_STOW: the QQS wait screen asks to put it on / take it off).
+ * Everything that measures heights runs in the calibration frame (layer offset out of H), so the first-layer
+ * offset survives G33 and is not baked into the mesh.
+ *   M2007 R<n>            Probe repeatability: n (2..10) probes at the centre -> qqs::pj.z[]
+ *   M2007 P               Probe height, step 1: calibration frame, G28, probe the centre (-> pj.measured), stow,
+ *                         nozzle to Z1 over the centre. Step 2 is the paper test with M2006 Z; then M851 Z + M2006 S0.
+ *   M2007 C P<points>     Delta auto calibration: G33 P<points> in the calibration frame. Old values kept for M2007 U.
+ *   M2007 U               Undo the last M2007 C: reload the saved settings (M501: geometry AND the mesh G33 cleared), G28.
+ *   M2007 M               Bilinear mesh: G29 in the calibration frame (leveling stays on).
  */
 #pragma once
 
@@ -44,10 +54,27 @@ namespace qqs {
   extern bool cal_active;         // M2006 S1 took the layer offset out of H
   // z[i]: where the paper dragged at point i (calibration frame). Uses the current M665/M666 as the start.
   bool cal_solve(const float z[], const uint8_t n);
+
+  // ---- v3.3 probe tools (M2007) ----
+  #define PRB_MAX 10
+  struct ProbeJob {
+    volatile bool running, done, ok;
+    char kind;                    // 'R' repeatability, 'P' probe height, 'C' delta calibration, 'M' mesh
+    uint8_t n, i;                 // repeatability: samples asked / taken
+    float z[PRB_MAX];             // repeatability samples (mm)
+    float measured;               // 'P': centre height the probe reports (calibration frame)
+    millis_t start_ms, end_ms;
+    // 'C': values before (actual frame) and after, for the result page and M2007 U
+    float oldH, oldR, old_adj[3], old_ang[3], newH, newR, new_adj[3], new_ang[3];
+    bool had_mesh;                // 'C': a mesh existed before (G33 clears it: it no longer fits the new geometry)
+    char sd[12];                  // 'C': "0.012" from G33's status line, "" if it did not finish
+  };
+  extern ProbeJob pj;
 }
 
 void qqs_M2003();
 void qqs_M2005();
 void qqs_M2006();
+void qqs_M2007();
 
 #endif

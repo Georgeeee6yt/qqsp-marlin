@@ -393,6 +393,10 @@ static float auto_tune_a(const float dcr) {
  *
  *   S   Save offset_sensorless_adj
  */
+#if ENABLED(QQS_UI)
+  extern float qqs_g33_sd;   // lcd/tft/qqs/qqs_tools.cpp
+#endif
+
 void GcodeSuite::G33() {
 
   TERN_(FULL_REPORT_TO_HOST_FEATURE, set_and_report_grblstate(M_PROBE));
@@ -634,6 +638,7 @@ void GcodeSuite::G33() {
     if (verbose_level != 0) { // !dry run
       if ((zero_std_dev >= test_precision && iterations > force_iterations) || zero_std_dev <= calibration_precision) { // end iterations
         SERIAL_ECHOPGM("Calibration OK");
+        TERN_(QQS_UI, qqs_g33_sd = zero_std_dev_min);   // QQS-Pro: the status line is overwritten by the stow prompt later
         SERIAL_ECHO_SP(32);
         #if HAS_BED_PROBE
           if (zero_std_dev >= test_precision && !_1p_calibration && !_0p_calibration)

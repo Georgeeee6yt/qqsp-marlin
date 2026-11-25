@@ -1159,6 +1159,7 @@ void GcodeSuite::process_parsed_command(const bool no_ok/*=false*/) {
         case 2003: qqs_M2003(); break;                            // M2003: QQS-Pro first-layer offset
         case 2005: qqs_M2005(); break;                            // M2005: QQS-Pro endstop repeatability test
         case 2006: qqs_M2006(); break;                            // M2006: QQS-Pro manual calibration moves
+        case 2007: qqs_M2007(); break;                            // M2007: QQS-Pro probe tools (G33 / G29 wrappers)
         case 2010: qqs_M2010(); break;                            // M2010: QQS-Pro animation timing
       #endif
       #if ENABLED(QQS_PERF)

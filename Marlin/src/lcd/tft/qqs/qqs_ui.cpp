@@ -872,8 +872,8 @@ namespace qqs {
     struct Tile { const qqs_bitmap_t *icon; const char *label; const char *sub; screenFunc_t cb; };
     static const Tile tiles[12] = {
       { &qqs_i18_ruler_measure,   "手動校準", nullptr,  go_cal },
-      { &qqs_i18_target,          "自動校準", "需探頭", nullptr },
-      { &qqs_i18_grid_dots,       "自動網格", "需探頭", nullptr },
+      { &qqs_i18_target,          "自動校準", "需探頭", go_probe },
+      { &qqs_i18_grid_dots,       "自動網格", "需探頭", go_mesh },
       { &qqs_i18_arrows_vertical, "Z 偏移",   nullptr,  go_zoff },
       { &qqs_i18_chart_line,      "PID 調整", nullptr,  go_pid },
       { &qqs_i18_adjustments,     "機器參數", nullptr,  go_params },
