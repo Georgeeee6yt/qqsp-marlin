@@ -2109,18 +2109,52 @@
  *
  * See https://marlinfw.org/docs/features/lin_advance.html for full instructions.
  */
-//#define LIN_ADVANCE
+#define LIN_ADVANCE             // QQS-Pro v3.2.9: Smooth LA from George's B1 (V5.4), K = 0 until tuned
 #if ENABLED(LIN_ADVANCE)
   #if ENABLED(DISTINCT_E_FACTORS)
-    #define ADVANCE_K { 0.22 }    // (mm) Compression length per 1mm/s extruder speed, per extruder
+    #define ADVANCE_K { 0.0 }     // (mm) Compression length per 1mm/s extruder speed, per extruder
   #else
-    #define ADVANCE_K 0.22        // (mm) Compression length applying to all extruders
+    #define ADVANCE_K 0.0         // (mm) 0 = off until calibrated (M900 K). The EEPROM slot was 0 before LA was built in.
   #endif
   //#define ADVANCE_K_EXTRA       // Add a second linear advance constant, configurable with M900 L.
   //#define LA_DEBUG              // Print debug information to serial during operation. Disable for production use.
   #define EXPERIMENTAL_SCURVE     // Allow S-Curve Acceleration to be used with LA.
-  //#define ALLOW_LOW_EJERK       // Allow a DEFAULT_EJERK value of <10. Recommended for direct drive hotends.
+  #define ALLOW_LOW_EJERK         // QQS-Pro: keep DEFAULT_EJERK 5 (unchanged motion with K = 0)
   //#define EXPERIMENTAL_I2S_LA   // Allow I2S_STEPPER_STREAM to be used with LA. Performance degrades as the LA step rate reaches ~20kHz.
+
+  /**
+   * Smooth Linear Advance, back-ported from Marlin bugfix-2.1.x (PR #27710 + fixes incl. #28671)
+   * by George for the BIQU B1 (V5 .. V5.4), ported to the QQS-Pro in v3.2.9:
+   *  - S_CURVE_ACCELERATION supported (lookahead follows the Bezier rate, as upstream does)
+   *  - no float math left in the ISR (the F103 has no FPU)
+   * The extruder looks ADVANCE_TAU ahead into the planner and the pressure term is smoothed
+   * (5th-order exponential ~ Gaussian). No LA acceleration cap. ALL extruder steps come from the
+   * LA ISR (also with K = 0); position tracking keeps the total E exact.
+   */
+  #define SMOOTH_LIN_ADVANCE
+  #if ENABLED(SMOOTH_LIN_ADVANCE)
+    #define ADVANCE_TAU 0.02         // (s) U: release tau = smoothing / lookahead time (M900 U, not saved)
+    #define SMOOTH_LIN_ADV_HZ 1000   // (Hz) How often to update extruder speed
+    #define SMOOTH_LA_POSITION_TRACKING
+    #define SMOOTH_LA_CORRECTION_MS 20   // (ms) How fast a >1 step position error is removed
+    /**
+     *   K (M900 K) = build K (saved by M500)       J (M900 J) = release K, 0 = same as K
+     *   B (M900 B) = build tau (s)                  U (M900 U) = release tau (s)
+     *   R (M900 R) = give-back speed of the release beyond K (mm/s filament)
+     *   A (M900 A) = E acceleration limit of the LA path (mm/s^2, 100..20000)
+     *   V (M900 V) = E speed limit of the LA path (mm/s, 0 = off, 5..100)   [QQS-Pro]
+     * Only K is saved by M500.
+     */
+    #define SMOOTH_LA_RELEASE_GAIN
+    #define SMOOTH_LA_RELEASE_K         0.0  // J
+    #define ADVANCE_TAU_BUILD           0.01 // B (s)
+    #define SMOOTH_LA_REFILL_MMS        15   // R (mm/s)
+    #define SMOOTH_LA_E_ACCEL           5000 // A: above the planner's E limits, so never binding with K = 0
+    #define SMOOTH_LA_E_VMAX            0    // V (QQS-Pro): E speed limit of the LA path (mm/s), 0 = off.
+                                             //   A lower A makes position tracking catch up FASTER afterwards;
+                                             //   a stealthChop extruder may need this cap as well.
+    #define SMOOTH_LA_PEAK_RELAX_MS     150  // (fixed) decay of the cap reference
+  #endif
 #endif
 
 // @section leveling
@@ -2388,7 +2422,7 @@
 #if BOTH(SDSUPPORT, DIRECT_STEPPING)
   #define BLOCK_BUFFER_SIZE  8
 #elif ENABLED(SDSUPPORT)
-  #define BLOCK_BUFFER_SIZE 16
+  #define BLOCK_BUFFER_SIZE 32   // QQS-Pro v3.2.9: Smooth LA looks up to U (0.02..0.15 s) ahead; 16 short blocks can be < 60 ms
 #else
   #define BLOCK_BUFFER_SIZE 16
 #endif

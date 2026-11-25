@@ -1362,12 +1362,26 @@ static_assert(X_MAX_LENGTH >= X_BED_SIZE, "Movement bounds (X_MIN_POS, X_MAX_POS
   #else
     static_assert(WITHIN(ADVANCE_K, 0, 10), "ADVANCE_K must be from 0 to 10 (Changed in LIN_ADVANCE v1.5, Marlin 1.1.9).");
   #endif
-  #if ENABLED(S_CURVE_ACCELERATION) && DISABLED(EXPERIMENTAL_SCURVE)
+  #if ENABLED(S_CURVE_ACCELERATION) && NONE(EXPERIMENTAL_SCURVE, SMOOTH_LIN_ADVANCE)   // [QQS-Pro] the Smooth LA lookahead follows the S-curve
     #error "LIN_ADVANCE and S_CURVE_ACCELERATION may not play well together! Enable EXPERIMENTAL_SCURVE to continue."
   #elif ENABLED(DIRECT_STEPPING)
     #error "DIRECT_STEPPING is incompatible with LIN_ADVANCE. Enable in external planner if possible."
   #elif NONE(HAS_JUNCTION_DEVIATION, ALLOW_LOW_EJERK) && defined(DEFAULT_EJERK)
     static_assert(DEFAULT_EJERK >= 10, "It is strongly recommended to set DEFAULT_EJERK >= 10 when using LIN_ADVANCE. Enable ALLOW_LOW_EJERK to bypass this alert (e.g., for direct drive).");
+  #endif
+  // [George] V5 Smooth LA back-port limits
+  #if ENABLED(SMOOTH_LIN_ADVANCE)
+    #ifndef CPU_32_BIT
+      #error "SMOOTH_LIN_ADVANCE requires a 32-bit CPU."
+    #elif ENABLED(MIXING_EXTRUDER)
+      #error "This SMOOTH_LIN_ADVANCE back-port does not support MIXING_EXTRUDER."
+    #elif ENABLED(I2S_STEPPER_STREAM)
+      #error "This SMOOTH_LIN_ADVANCE back-port does not support I2S_STEPPER_STREAM."
+    #elif DISTINCT_E > 1
+      #error "This SMOOTH_LIN_ADVANCE back-port assumes one shared K (no DISTINCT_E_FACTORS)."
+    #elif BOTH(SMOOTH_LA_POSITION_TRACKING, INPUT_SHAPING_E_SYNC)
+      #error "SMOOTH_LA_POSITION_TRACKING and INPUT_SHAPING_E_SYNC can't be used together."
+    #endif
   #endif
 #endif
 

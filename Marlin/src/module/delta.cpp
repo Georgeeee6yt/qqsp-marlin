@@ -29,6 +29,7 @@
 #if ENABLED(DELTA)
 
 #include "delta.h"
+#include "../feature/qqs_perf.h"
 #include "motion.h"
 
 // For homing:
@@ -111,6 +112,7 @@ void recalc_delta_settings() {
   }while(0)
 
 void inverse_kinematics(const xyz_pos_t &raw) {
+  QQS_PERF_START(perf_k0);
   #if HAS_HOTEND_OFFSET
     // Delta hotend offsets must be applied in Cartesian space with no "spoofing"
     xyz_pos_t pos = { raw.x - hotend_offset[active_extruder].x,
@@ -122,6 +124,7 @@ void inverse_kinematics(const xyz_pos_t &raw) {
     DELTA_IK(raw);
     //DELTA_DEBUG(raw);
   #endif
+  QQS_PERF_END(ik, perf_k0);
 }
 
 /**

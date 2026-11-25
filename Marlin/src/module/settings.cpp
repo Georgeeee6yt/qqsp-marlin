@@ -3400,6 +3400,13 @@ void MarlinSettings::reset() {
     #else
       planner.extruder_advance_K[0] = ADVANCE_K;
     #endif
+    TERN_(SMOOTH_LIN_ADVANCE, stepper.set_advance_tau(ADVANCE_TAU));  // [George] V5 (tau is not stored in EEPROM)
+    #if ENABLED(SMOOTH_LA_RELEASE_GAIN)  // [George] V5.2
+      stepper.set_release(SMOOTH_LA_RELEASE_K, SMOOTH_LA_REFILL_MMS);
+      stepper.set_e_accel(SMOOTH_LA_E_ACCEL);
+      stepper.set_e_vmax(SMOOTH_LA_E_VMAX);
+      stepper.set_build_tau(ADVANCE_TAU_BUILD);
+    #endif
   #endif
 
   //

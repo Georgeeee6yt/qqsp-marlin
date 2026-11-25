@@ -26,6 +26,7 @@
  */
 
 #include "gcode.h"
+#include "../feature/qqs_perf.h"
 GcodeSuite gcode;
 
 #if ENABLED(WIFI_CUSTOM_COMMAND)
@@ -1159,6 +1160,9 @@ void GcodeSuite::process_parsed_command(const bool no_ok/*=false*/) {
         case 2005: qqs_M2005(); break;                            // M2005: QQS-Pro endstop repeatability test
         case 2006: qqs_M2006(); break;                            // M2006: QQS-Pro manual calibration moves
         case 2010: qqs_M2010(); break;                            // M2010: QQS-Pro animation timing
+      #endif
+      #if ENABLED(QQS_PERF)
+        case 2011: qqs_perf::report(parser.seen('R')); break;     // M2011: QQS-Pro performance counters (R = reset)
       #endif
 
       #if ENABLED(POWER_LOSS_RECOVERY)

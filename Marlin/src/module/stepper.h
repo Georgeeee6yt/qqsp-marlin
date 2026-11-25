@@ -419,6 +419,7 @@ constexpr ena_mask_t enable_overlap[] = {
           return forward;
         }
         static bool empty_x() { return head_x == tail; }
+        static shaping_time_t get_delay_x() { return delay_x; }  // [George] V5 E sync
         static uint16_t free_count_x() { return _free_count_x; }
       #endif
       #if ENABLED(INPUT_SHAPING_Y)
@@ -433,6 +434,7 @@ constexpr ena_mask_t enable_overlap[] = {
           return forward;
         }
         static bool empty_y() { return head_y == tail; }
+        static shaping_time_t get_delay_y() { return delay_y; }  // [George] V5 E sync
         static uint16_t free_count_y() { return _free_count_y; }
       #endif
       static void purge() {
@@ -499,6 +501,24 @@ class Stepper {
 
     #if ENABLED(FREEZE_FEATURE)
       static bool frozen;                   // Set this flag to instantly freeze motion
+    #endif
+
+    #if ENABLED(SMOOTH_LIN_ADVANCE)
+      // [George] V5: Smooth LA tau (smoothing = lookahead time). One value for both tools.
+      static void set_advance_tau(const float tau);
+      static float get_advance_tau() { return advance_tau; }
+    #endif
+    #if ENABLED(SMOOTH_LA_RELEASE_GAIN)
+      // [George] V5.2: release K (M900 J, 0 = same as K), give-back time (M900 R), build tau (M900 B)
+      static void set_release(const float release_k, const float refill_mms);
+      static float get_release_k() { return release_k; }
+      static float get_refill_mms() { return refill_mms; }
+      static void set_e_accel(const float a);   // [QQS-Pro] range 100..20000 (stealthChop extruder)
+      static float get_e_accel() { return e_accel; }
+      static void set_e_vmax(const float v);    // [QQS-Pro] M900 V: 0 = off, 5..100 mm/s
+      static float get_e_vmax() { return e_vmax; }
+      static void set_build_tau(const float tau);
+      static float get_build_tau() { return build_tau; }
     #endif
 
   private:
@@ -576,9 +596,38 @@ class Stepper {
       static constexpr uint32_t LA_ADV_NEVER = 0xFFFFFFFF;
       static uint32_t nextAdvanceISR,
                       la_interval;      // Interval between ISR calls for LA
-      static int32_t  la_delta_error,   // Analogue of delta_error.e for E steps in LA ISR
-                      la_dividend,      // Analogue of advance_dividend.e for E steps in LA ISR
-                      la_advance_steps; // Count of steps added to increase nozzle pressure
+      #if ENABLED(SMOOTH_LIN_ADVANCE)
+        // [George] V5 Smooth LA state
+        static uint32_t curr_timer_tick,        // Stepper ticks since the current block started
+                        curr_step_rate,         // Current block step rate (steps/s)
+                        advance_tau_ticks,      // ADVANCE_TAU in stepper timer ticks
+                        advance_alpha_q30;      // Per-stage smoothing factor (Q30)
+        static float    advance_tau;            // Smoothing / lookahead time (s)
+        static int32_t  sla_last_target,        // Last pressure target (E steps)
+                        sla_last_rate;          // Last commanded E rate (steps/s, signed)
+        static int32_t  sla_smoothed[SMOOTH_LIN_ADV_EXP_ORDER]; // Smoothing filter stages (8 fractional bits)
+        #if ENABLED(SMOOTH_LA_POSITION_TRACKING)
+          static int32_t sla_nominal_pos,       // E steps the planner asked for (main Bresenham, signed)
+                         sla_emitted_pos;       // E steps actually sent by advance_isr (signed)
+        #endif
+        #if ENABLED(SMOOTH_LA_RELEASE_GAIN)
+          static float    release_k,            // J (0 = same as K)
+                          build_tau,            // B (s)
+                          refill_mms,           // R (mm/s)
+                          e_accel,              // A (mm/s^2)
+                          e_vmax;               // V (mm/s, 0 = off) [QQS-Pro]
+          static uint32_t build_tau_ticks,      // B in stepper timer ticks
+                          build_alpha_q30;      // Per-stage smoothing factor while rising (Q30)
+          static int32_t  sla_extra_q8,         // Release beyond K (signed), Q8 E steps
+                          sla_prev_raw,         // Previous raw target (E steps)
+                          sla_peak;             // Recent peak raw target (E steps), for the cap
+          static uint32_t release_decay_q30;    // Per-update give-back factor exp(-dt/R), Q30
+        #endif
+      #else
+        static int32_t  la_delta_error,   // Analogue of delta_error.e for E steps in LA ISR
+                        la_dividend,      // Analogue of advance_dividend.e for E steps in LA ISR
+                        la_advance_steps; // Count of steps added to increase nozzle pressure
+      #endif
     #endif
 
     #if ENABLED(INTEGRATED_BABYSTEPPING)
@@ -638,6 +687,18 @@ class Stepper {
     #if ENABLED(LIN_ADVANCE)
       // The Linear advance ISR phase
       static void advance_isr();
+      #if ENABLED(SMOOTH_LIN_ADVANCE)
+        static uint32_t smooth_lin_adv_isr();
+        static bool smooth_lin_adv_lookahead(uint32_t stepper_ticks, int32_t &e_rate);
+        static void set_la_interval(int32_t step_rate);
+        static void smooth_lin_adv_reset();
+        #if ENABLED(S_CURVE_ACCELERATION)
+          static uint32_t sla_bezier(const int32_t v0, const int32_t v1, const uint32_t av, const uint32_t t, const uint32_t T);
+        #endif
+        #if ENABLED(INPUT_SHAPING_E_SYNC)
+          static xy_long_t smooth_lin_adv_lookback(const uint32_t stepper_ticks);
+        #endif
+      #endif
     #endif
 
     #if ENABLED(INTEGRATED_BABYSTEPPING)
@@ -687,7 +748,8 @@ class Stepper {
       current_block = nullptr;
       axis_did_move = 0;
       planner.release_current_block();
-      TERN_(LIN_ADVANCE, la_interval = nextAdvanceISR = LA_ADV_NEVER);
+      // [George] V5: with Smooth LA the E ISR keeps running after a block ends (pressure release)
+      TERN_(HAS_ROUGH_LIN_ADVANCE, la_interval = nextAdvanceISR = LA_ADV_NEVER);
     }
 
     // Quickly stop all steppers

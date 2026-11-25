@@ -66,6 +66,7 @@
  */
 
 #include "planner.h"
+#include "../feature/qqs_perf.h"
 #include "stepper.h"
 #include "motion.h"
 #include "temperature.h"
@@ -852,7 +853,18 @@ void Planner::calculate_trapezoid_for_block(block_t * const block, const_float_t
   #endif
   block->final_rate = final_rate;
 
-  #if ENABLED(LIN_ADVANCE)
+  #if ENABLED(SMOOTH_LIN_ADVANCE)
+    // [George] V5: phase durations in stepper timer ticks, for the Smooth LA lookahead
+    {
+      #if DISABLED(S_CURVE_ACCELERATION)    // [QQS-Pro] the S-curve code above already stored these (same definition)
+        const float rate_factor = inverse_accel * (STEPPER_TIMER_RATE);
+        block->acceleration_time = rate_factor * _MAX(0.0f, float(cruise_rate) - float(initial_rate));
+        block->deceleration_time = rate_factor * _MAX(0.0f, float(cruise_rate) - float(final_rate));
+        block->cruise_rate = cruise_rate;
+      #endif
+      block->cruise_time = plateau_steps > 0 ? float(plateau_steps) * float(STEPPER_TIMER_RATE) / float(cruise_rate) : 0;
+    }
+  #elif HAS_ROUGH_LIN_ADVANCE
     if (block->la_advance_rate) {
       const float comp = extruder_advance_K[E_INDEX_N(block->extruder)] * block->steps.e / block->step_event_count;
       block->max_adv_steps = cruise_rate * comp;
@@ -1822,6 +1834,7 @@ bool Planner::_buffer_steps(const xyze_long_t &target
   if (cleaning_buffer_counter) return false;
 
   // Fill the block with the specified movement
+  QQS_PERF_START(perf_p0);
   if (!_populate_block(block, target
         OPTARG(HAS_POSITION_FLOAT, target_float)
         OPTARG(HAS_DIST_MM_ARG, cart_dist_mm)
@@ -1848,6 +1861,7 @@ bool Planner::_buffer_steps(const xyze_long_t &target
 
   // Recalculate and optimize trapezoidal speed profiles
   recalculate(TERN_(HINTS_SAFE_EXIT_SPEED, hints.safe_exit_speed_sqr));
+  QQS_PERF_END(plan, perf_p0);   // QQS-Pro: populate + recalculate of a queued block
 
   // Movement successfully queued!
   return true;
@@ -2555,6 +2569,7 @@ bool Planner::_populate_block(
         // This assumes no one will use a retract length of 0mm < retr_length < ~0.2mm and no one will print 100mm wide lines using 3mm filament or 35mm wide lines using 1.75mm filament.
         if (e_D_ratio > 3.0f)
           use_advance_lead = false;
+        #if HAS_ROUGH_LIN_ADVANCE   // [George] V5: Smooth LA has no acceleration cap
         else {
           // Scale E acceleration so that it will be possible to jump to the advance speed.
           const uint32_t max_accel_steps_per_s2 = MAX_E_JERK(extruder) / (extruder_advance_K[E_INDEX_N(extruder)] * e_D_ratio) * steps_per_mm;
@@ -2562,6 +2577,7 @@ bool Planner::_populate_block(
             SERIAL_ECHOLNPGM("Acceleration limited.");
           NOMORE(accel, max_accel_steps_per_s2);
         }
+        #endif
       }
     #endif
 
@@ -2588,7 +2604,18 @@ bool Planner::_populate_block(
   #if DISABLED(S_CURVE_ACCELERATION)
     block->acceleration_rate = (uint32_t)(accel * (float(1UL << 24) / (STEPPER_TIMER_RATE)));
   #endif
-  #if ENABLED(LIN_ADVANCE)
+  #if ENABLED(SMOOTH_LIN_ADVANCE)
+    // [George] V5: signed E/step ratio and flags for the Smooth LA ISR
+    {
+      const uint32_t ratio = uint32_t((uint64_t(block->steps.e) << 30) / block->step_event_count);
+      block->e_step_ratio_q30 = TEST(block->direction_bits, E_AXIS) ? -int32_t(ratio) : int32_t(ratio);
+      #if ENABLED(INPUT_SHAPING_E_SYNC)
+        const uint32_t xy_steps = block->steps.x + block->steps.y;
+        block->xy_length_inv_q30 = xy_steps ? (_BV32(30) / xy_steps) : 0;
+      #endif
+      block->use_advance_lead = use_advance_lead;
+    }
+  #elif ENABLED(LIN_ADVANCE)
     block->la_advance_rate = 0;
     block->la_scaling = 0;
 

@@ -35,6 +35,7 @@
 #include "../../module/printcounter.h"
 #include "../../module/planner.h"
 #include "../../module/motion.h"
+#include "../../feature/qqs_perf.h"
 
 #if DISABLED(LCD_PROGRESS_BAR) && BOTH(FILAMENT_LCD_DISPLAY, SDSUPPORT)
   #include "../../feature/filwidth.h"
@@ -67,6 +68,7 @@ void MarlinUI::tft_idle() {
   TERN_(QQS_UI, qqs::anim_idle());
   TERN_(QQS_UI, qqs::sensor_poll());
   TERN_(QQS_UI, qqs::sys_poll());
+  TERN_(QQS_PERF, qqs_perf::poll());
   #if ENABLED(QQS_UI) && defined(MKS_WIFI)
     espf_poll();                       // ESP8266 flasher state machine (does nothing when idle)
   #endif

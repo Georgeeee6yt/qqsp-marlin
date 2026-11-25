@@ -43,6 +43,11 @@
   #define JD_USE_LOOKUP_TABLE
 #endif
 
+#if ENABLED(SMOOTH_LIN_ADVANCE)
+  #define SMOOTH_LIN_ADV_EXP_ORDER 5  // Closest to Gaussian smoothing between 3 and 7
+  #define SMOOTH_LIN_ADV_INTERVAL (STEPPER_TIMER_RATE / (SMOOTH_LIN_ADV_HZ)) // Stepper timer ticks per update
+#endif
+
 #include "motion.h"
 #include "../gcode/queue.h"
 
@@ -235,10 +240,24 @@ typedef struct PlannerBlock {
     uint32_t acceleration_rate;             // The acceleration rate used for acceleration calculation
   #endif
 
+  #if ENABLED(SMOOTH_LIN_ADVANCE)           // [George] V5: block timing used by the Smooth LA lookahead
+    #if DISABLED(S_CURVE_ACCELERATION)      // [QQS-Pro] with S-curve these three are the S-curve fields above
+      uint32_t cruise_rate,                 // Rate reached between acceleration and deceleration
+               acceleration_time,           // Phase durations in STEP timer counts
+               deceleration_time;
+    #endif
+    uint32_t cruise_time;
+    int32_t  e_step_ratio_q30;              // Signed ratio of E steps to block steps (Q30)
+    #if ENABLED(INPUT_SHAPING_E_SYNC)
+      uint32_t xy_length_inv_q30;           // 1 / (steps.x + steps.y) in Q30
+    #endif
+    bool use_advance_lead;                  // Pressure advance applies to this block
+  #endif
+
   axis_bits_t direction_bits;               // The direction bit set for this block (refers to *_DIRECTION_BIT in config.h)
 
   // Advance extrusion
-  #if ENABLED(LIN_ADVANCE)
+  #if HAS_ROUGH_LIN_ADVANCE
     uint32_t la_advance_rate;               // The rate at which steps are added whilst accelerating
     uint8_t  la_scaling;                    // Scale ISR frequency down and step frequency up by 2 ^ la_scaling
     uint16_t max_adv_steps,                 // Max advance steps to get cruising speed pressure
@@ -956,6 +975,21 @@ class Planner {
      * WARNING: Called from Stepper ISR context!
      */
     static block_t* get_current_block();
+
+    #if ENABLED(SMOOTH_LIN_ADVANCE)
+      /**
+       * [George] V5: Look at a queued block without consuming it.
+       * offset 0 = the block at the tail (the one the stepper is executing).
+       * Returns nullptr past the end or if the block is still being recalculated.
+       * WARNING: Called from Stepper ISR context!
+       */
+      static block_t* get_future_block(const uint8_t offset) {
+        if (movesplanned() <= offset) return nullptr;
+        block_t * const block = &block_buffer[BLOCK_MOD(block_buffer_tail + offset)];
+        if (block->flag.recalculate) return nullptr;
+        return block;
+      }
+    #endif
 
     /**
      * "Release" the current block so its slot can be reused.

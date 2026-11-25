@@ -29,6 +29,7 @@
  */
 
 #include "MarlinCore.h"
+#include "feature/qqs_perf.h"
 
 #include "HAL/shared/Delay.h"
 #include "HAL/shared/esp_wifi.h"
@@ -1369,6 +1370,7 @@ void setup() {
     SETUP_RUN(refresh_delta_clip_start_height()); // Init safe delta height without soft endstops
   #endif
 
+  TERN_(QQS_PERF, qqs_perf::init());  // QQS-Pro: DWT cycle counter before the stepper ISR starts
   SETUP_RUN(stepper.init());          // Init stepper. This enables interrupts!
 
   #if HAS_SERVOS

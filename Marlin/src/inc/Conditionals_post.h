@@ -42,6 +42,23 @@
   #define HAS_LINEAR_E_JERK 1
 #endif
 
+// [George] V5 Smooth LA back-port
+#if DISABLED(LIN_ADVANCE)
+  #undef SMOOTH_LIN_ADVANCE
+#endif
+#if DISABLED(SMOOTH_LIN_ADVANCE)
+  #undef SMOOTH_LA_POSITION_TRACKING
+#endif
+#if DISABLED(SMOOTH_LA_POSITION_TRACKING)
+  #undef SMOOTH_LA_RELEASE_GAIN
+#endif
+#if ENABLED(LIN_ADVANCE) && DISABLED(SMOOTH_LIN_ADVANCE)
+  #define HAS_ROUGH_LIN_ADVANCE 1   // Classic (V4) Linear Advance
+#endif
+#if DISABLED(SMOOTH_LIN_ADVANCE) || NONE(INPUT_SHAPING_X, INPUT_SHAPING_Y)
+  #undef INPUT_SHAPING_E_SYNC
+#endif
+
 // Determine which type of 'EEPROM' is in use
 #if ENABLED(EEPROM_SETTINGS)
   // EEPROM type may be defined by compile flags, configs, HALs, or pins

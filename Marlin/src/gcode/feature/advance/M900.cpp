@@ -26,6 +26,7 @@
 
 #include "../../gcode.h"
 #include "../../../module/planner.h"
+#include "../../../module/stepper.h"
 
 #if ENABLED(ADVANCE_K_EXTRA)
   float other_extruder_advance_K[DISTINCT_E];
@@ -105,9 +106,59 @@ void GcodeSuite::M900() {
 
   #endif
 
-  if (newK != oldK) {
+  // [George] V5: U<seconds> = Smooth LA tau (smoothing / lookahead time). Not saved by M500.
+  #if ENABLED(SMOOTH_LIN_ADVANCE)
+    const float oldU = stepper.get_advance_tau();
+    float newU = oldU;
+    if (parser.seenval('U')) {
+      const float U = parser.value_float();
+      if (WITHIN(U, 0.0f, 0.5f)) newU = U;
+      else { SERIAL_ECHOLNPGM("?U value out of range (0-0.5)."); }
+    }
+  #endif
+
+  // [George] V5.2: J<release K> (0 = same as K), B<build tau>, R<ms>. Not saved by M500.
+  #if ENABLED(SMOOTH_LA_RELEASE_GAIN)
+    const float oldJ = stepper.get_release_k(), oldB = stepper.get_build_tau(),
+                oldR = stepper.get_refill_mms(), oldA = stepper.get_e_accel(), oldV = stepper.get_e_vmax();
+    float newJ = oldJ, newB = oldB, newR = oldR, newA = oldA, newV = oldV;
+    if (parser.seenval('J')) {
+      const float J = parser.value_float();
+      if (WITHIN(J, 0.0f, 10.0f)) newJ = J;
+      else { SERIAL_ECHOLNPGM("?J value out of range (0-10)."); }
+    }
+    if (parser.seenval('B')) {
+      const float B = parser.value_float();
+      if (WITHIN(B, 0.0f, 0.5f)) newB = B;
+      else { SERIAL_ECHOLNPGM("?B value out of range (0-0.5)."); }
+    }
+    if (parser.seenval('R')) {
+      const float R = parser.value_float();
+      if (WITHIN(R, 1.0f, 60.0f)) newR = R;
+      else { SERIAL_ECHOLNPGM("?R value out of range (1-60 mm/s)."); }
+    }
+    if (parser.seenval('A')) {
+      const float A = parser.value_float();
+      if (WITHIN(A, 100.0f, 20000.0f)) newA = A;
+      else { SERIAL_ECHOLNPGM("?A value out of range (100-20000)."); }
+    }
+    if (parser.seenval('V')) {   // [QQS-Pro]
+      const float V = parser.value_float();
+      if (V == 0.0f || WITHIN(V, 5.0f, 100.0f)) newV = V;
+      else { SERIAL_ECHOLNPGM("?V value out of range (0 or 5-100 mm/s)."); }
+    }
+  #endif
+
+  if (newK != oldK || TERN0(SMOOTH_LIN_ADVANCE, newU != oldU) || TERN0(SMOOTH_LA_RELEASE_GAIN, newJ != oldJ || newB != oldB || newR != oldR || newA != oldA || newV != oldV)) {
     planner.synchronize();
     kref = newK;
+    TERN_(SMOOTH_LIN_ADVANCE, if (newU != oldU) stepper.set_advance_tau(newU));
+    #if ENABLED(SMOOTH_LA_RELEASE_GAIN)
+      if (newJ != oldJ || newR != oldR) stepper.set_release(newJ, newR);
+      if (newB != oldB) stepper.set_build_tau(newB);
+      if (newA != oldA) stepper.set_e_accel(newA);
+      if (newV != oldV) stepper.set_e_vmax(newV);
+    #endif
   }
 
   if (!parser.seen_any()) {
@@ -129,7 +180,14 @@ void GcodeSuite::M900() {
 
       SERIAL_ECHO_START();
       #if DISTINCT_E < 2
-        SERIAL_ECHOLNPGM("Advance K=", planner.extruder_advance_K[0]);
+        #if ENABLED(SMOOTH_LA_RELEASE_GAIN)
+          SERIAL_ECHOLNPGM("Advance K=", planner.extruder_advance_K[0], " J=", stepper.get_release_k(),
+                           " B=", stepper.get_build_tau(), " U=", stepper.get_advance_tau(), " R=", stepper.get_refill_mms(), " A=", stepper.get_e_accel(), " V=", stepper.get_e_vmax());
+        #elif ENABLED(SMOOTH_LIN_ADVANCE)
+          SERIAL_ECHOLNPGM("Advance K=", planner.extruder_advance_K[0], " TAU=", stepper.get_advance_tau());
+        #else
+          SERIAL_ECHOLNPGM("Advance K=", planner.extruder_advance_K[0]);
+        #endif
       #else
         SERIAL_ECHOPGM("Advance K");
         EXTRUDER_LOOP() {
@@ -148,7 +206,14 @@ void GcodeSuite::M900_report(const bool forReplay/*=true*/) {
   report_heading(forReplay, F(STR_LINEAR_ADVANCE));
   #if DISTINCT_E < 2
     report_echo_start(forReplay);
-    SERIAL_ECHOLNPGM("  M900 K", planner.extruder_advance_K[0]);
+    #if ENABLED(SMOOTH_LA_RELEASE_GAIN)
+      SERIAL_ECHOLNPGM("  M900 K", planner.extruder_advance_K[0], " J", stepper.get_release_k(),
+                       " B", stepper.get_build_tau(), " U", stepper.get_advance_tau(), " R", stepper.get_refill_mms(), " A", stepper.get_e_accel(), " V", stepper.get_e_vmax());
+    #elif ENABLED(SMOOTH_LIN_ADVANCE)
+      SERIAL_ECHOLNPGM("  M900 K", planner.extruder_advance_K[0], " U", stepper.get_advance_tau());
+    #else
+      SERIAL_ECHOLNPGM("  M900 K", planner.extruder_advance_K[0]);
+    #endif
   #else
     EXTRUDER_LOOP() {
       report_echo_start(forReplay);
