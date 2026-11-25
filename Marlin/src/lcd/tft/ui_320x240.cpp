@@ -66,6 +66,7 @@ void MarlinUI::tft_idle() {
 
   TERN_(QQS_UI, qqs::anim_idle());
   TERN_(QQS_UI, qqs::sensor_poll());
+  TERN_(QQS_UI, qqs::sys_poll());
   #if ENABLED(QQS_UI) && defined(MKS_WIFI)
     espf_poll();                       // ESP8266 flasher state machine (does nothing when idle)
   #endif
@@ -118,6 +119,12 @@ void MarlinUI::tft_idle() {
 
 void MarlinUI::draw_kill_screen() {
   tft.queue.reset();
+  #if ENABLED(QQS_UI)
+    tft.fill(0, 0, TFT_WIDTH, TFT_HEIGHT, qqs::C_STOPBG);
+    qqs::kill_text(status_message);
+    tft.queue.sync();
+    return;
+  #endif
   tft.fill(0, 0, TFT_WIDTH, TFT_HEIGHT, COLOR_KILL_SCREEN_BG);
 
   tft.canvas(0, 60, TFT_WIDTH, 20);

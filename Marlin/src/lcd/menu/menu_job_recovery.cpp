@@ -26,7 +26,7 @@
 
 #include "../../inc/MarlinConfigPre.h"
 
-#if BOTH(HAS_MARLINUI_MENU, POWER_LOSS_RECOVERY)
+#if BOTH(HAS_MARLINUI_MENU, POWER_LOSS_RECOVERY) && DISABLED(QQS_UI)
 
 #include "menu_item.h"
 #include "../../gcode/queue.h"

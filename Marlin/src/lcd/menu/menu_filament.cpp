@@ -26,7 +26,7 @@
 
 #include "../../inc/MarlinConfigPre.h"
 
-#if BOTH(HAS_MARLINUI_MENU, ADVANCED_PAUSE_FEATURE)
+#if BOTH(HAS_MARLINUI_MENU, ADVANCED_PAUSE_FEATURE) && DISABLED(QQS_UI)   // QQS-Pro: qqs_ui_sys.cpp
 
 #include "menu_item.h"
 #include "../../module/temperature.h"

@@ -78,7 +78,7 @@ const tImage Slider8x16x4           = { (void *)slider_8x16x4, 8, 16, GREYSCALE4
 const tImage LampOff_64x64x4           = { (void *)lamp_off_64x64x4, 64, 64, GREYSCALE4 };
 const tImage LampOn_64x64x4           = { (void *)lamp_on_64x64x4, 64, 64, GREYSCALE4 };
 
-// QQS-Pro: the icons of Marlin's own status / move screens are not built (those screens are not used)
+// QQS-Pro: none of Marlin's icons are built (all its screens are replaced, see qqs_ui_sys.cpp)
 const tImage Images[imgCount] = {
   TERN(QQS_UI, NoLogo, TERN(SHOW_BOOTSCREEN, TERN(BOOT_MARLIN_LOGO_SMALL, MarlinLogo195x59x16, MARLIN_LOGO_FULL_SIZE), NoLogo)),  // QQS-Pro draws its own
   TERN(QQS_UI, NoLogo, HotEnd_64x64x4),
@@ -97,21 +97,21 @@ const tImage Images[imgCount] = {
   TERN(QQS_UI, NoLogo, Menu_64x64x4),
   TERN(QQS_UI, NoLogo, Settings_64x64x4),
   TERN(QQS_UI, NoLogo, Directory_32x32x4),
-  Confirm_64x64x4,
-  Cancel_64x64x4,
-  Increase_64x64x4,
-  Decrease_64x64x4,
-  Back_32x32x4,
-  Up_32x32x4,
-  Down_32x32x4,
+  TERN(QQS_UI, NoLogo, Confirm_64x64x4),
+  TERN(QQS_UI, NoLogo, Cancel_64x64x4),
+  TERN(QQS_UI, NoLogo, Increase_64x64x4),
+  TERN(QQS_UI, NoLogo, Decrease_64x64x4),
+  TERN(QQS_UI, NoLogo, Back_32x32x4),
+  TERN(QQS_UI, NoLogo, Up_32x32x4),
+  TERN(QQS_UI, NoLogo, Down_32x32x4),
   TERN(QQS_UI, NoLogo, Left_32x32x4),
   TERN(QQS_UI, NoLogo, Right_32x32x4),
-  Refresh_32x32x4,
+  TERN(QQS_UI, NoLogo, Refresh_32x32x4),
   TERN(QQS_UI, NoLogo, Leveling_32x32x4),
-  Slider8x16x4,
+  TERN(QQS_UI, NoLogo, Slider8x16x4),
   TERN(QQS_UI, NoLogo, Home_64x64x4),
-  BtnRounded_64x52x4,
-  BtnRounded_42x39x4,
+  TERN(QQS_UI, NoLogo, BtnRounded_64x52x4),
+  TERN(QQS_UI, NoLogo, BtnRounded_42x39x4),
   TERN(QQS_UI, NoLogo, LampOff_64x64x4),
   TERN(QQS_UI, NoLogo, LampOn_64x64x4)
 };

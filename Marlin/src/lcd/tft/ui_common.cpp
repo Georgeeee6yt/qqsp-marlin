@@ -24,6 +24,10 @@
 
 #if HAS_GRAPHICAL_TFT
 
+#if ENABLED(QQS_UI)
+  #include "qqs/qqs_ui.h"
+#endif
+
 #include "ui_common.h"
 #include "../lcdprint.h"
 #include "../../libs/numtostr.h"
@@ -190,9 +194,11 @@ bool MarlinUI::detected() { return true; }
 
 void MarlinUI::init_lcd() {
   tft.init();
-  tft.set_font(MENU_FONT_NAME);
-  #ifdef SYMBOLS_FONT_NAME
-    tft.add_glyphs(SYMBOLS_FONT_NAME);
+  #if DISABLED(QQS_UI)   // QQS-Pro draws all text with its own fonts (qqs_font.h)
+    tft.set_font(MENU_FONT_NAME);
+    #ifdef SYMBOLS_FONT_NAME
+      tft.add_glyphs(SYMBOLS_FONT_NAME);
+    #endif
   #endif
   TERN_(TOUCH_SCREEN, touch.init());
   clear_lcd();
@@ -242,6 +248,7 @@ void MarlinUI::clear_lcd() {
     touch.clear();
 
     if (stage < CALIBRATION_SUCCESS) {
+      #if DISABLED(QQS_UI)
       switch (stage) {
         case CALIBRATION_TOP_LEFT: tft_string.set(GET_TEXT(MSG_TOP_LEFT)); break;
         case CALIBRATION_BOTTOM_LEFT: tft_string.set(GET_TEXT(MSG_BOTTOM_LEFT)); break;
@@ -249,6 +256,7 @@ void MarlinUI::clear_lcd() {
         case CALIBRATION_BOTTOM_RIGHT: tft_string.set(GET_TEXT(MSG_BOTTOM_RIGHT)); break;
         default: break;
       }
+      #endif
 
       x = touch_calibration.calibration_points[stage].x;
       y = touch_calibration.calibration_points[stage].y;
@@ -259,17 +267,24 @@ void MarlinUI::clear_lcd() {
       tft.add_bar(15, 0, 1, 31, COLOR_TOUCH_CALIBRATION);
 
       touch.add_control(CALIBRATE, 0, 0, TFT_WIDTH, TFT_HEIGHT, uint32_t(x) << 16 | uint32_t(y));
+      TERN_(QQS_UI, qqs::touch_cal_text(uint8_t(stage), false, false));
     }
     else {
-      tft_string.set(stage == CALIBRATION_SUCCESS ? GET_TEXT(MSG_CALIBRATION_COMPLETED) : GET_TEXT(MSG_CALIBRATION_FAILED));
+      #if ENABLED(QQS_UI)
+        qqs::touch_cal_text(0, true, stage == CALIBRATION_SUCCESS);
+      #else
+        tft_string.set(stage == CALIBRATION_SUCCESS ? GET_TEXT(MSG_CALIBRATION_COMPLETED) : GET_TEXT(MSG_CALIBRATION_FAILED));
+      #endif
       defer_status_screen(false);
       touch_calibration.calibration_end();
       touch.add_control(BACK, 0, 0, TFT_WIDTH, TFT_HEIGHT);
     }
 
-    tft.canvas(0, (TFT_HEIGHT - tft_string.font_height()) >> 1, TFT_WIDTH, tft_string.font_height());
-    tft.set_background(COLOR_BACKGROUND);
-    tft.add_text(tft_string.center(TFT_WIDTH), 0, COLOR_MENU_TEXT, tft_string);
+    #if DISABLED(QQS_UI)
+      tft.canvas(0, (TFT_HEIGHT - tft_string.font_height()) >> 1, TFT_WIDTH, tft_string.font_height());
+      tft.set_background(COLOR_BACKGROUND);
+      tft.add_text(tft_string.center(TFT_WIDTH), 0, COLOR_MENU_TEXT, tft_string);
+    #endif
   }
 
 #endif // TOUCH_SCREEN_CALIBRATION

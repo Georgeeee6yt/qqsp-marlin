@@ -1107,7 +1107,7 @@ void MarlinUI::init() {
         refresh(LCDVIEW_REDRAW_NOW);
       }
 
-      #if BOTH(HAS_MARLINUI_MENU, SCROLL_LONG_FILENAMES)
+      #if BOTH(HAS_MARLINUI_MENU, SCROLL_LONG_FILENAMES) && DISABLED(QQS_UI)
         // If scrolling of long file names is enabled and we are in the sd card menu,
         // cause a refresh to occur until all the text has scrolled into view.
         if (currentScreen == menu_media && !lcd_status_update_delay--) {
@@ -1881,6 +1881,10 @@ void MarlinUI::init() {
 
 #if ENABLED(EEPROM_SETTINGS)
 
+  #if ENABLED(QQS_UI)
+    namespace qqs { void eeprom_alert(const uint8_t err); }
+  #endif
+
   #if HAS_MARLINUI_MENU
     void MarlinUI::init_eeprom() {
       const bool good = settings.init_eeprom();
@@ -1913,7 +1917,9 @@ void MarlinUI::init() {
       FSTR_P const err_msg = eeprom_err(err);
       set_status(err_msg);
       TERN_(HOST_PROMPT_SUPPORT, hostui.notify(err_msg));
-      #if HAS_MARLINUI_MENU
+      #if ENABLED(QQS_UI)
+        qqs::eeprom_alert(uint8_t(err));
+      #elif HAS_MARLINUI_MENU
         editable.uint8 = err;
         goto_screen([]{
           FSTR_P const restore_msg = GET_TEXT_F(MSG_INIT_EEPROM);

@@ -96,7 +96,7 @@ void Touch::idle() {
   next_touch_ms = now;
 
   if (get_point(&_x, &_y)) {
-    #if HAS_RESUME_CONTINUE
+    #if HAS_RESUME_CONTINUE && DISABLED(QQS_UI)   // QQS-Pro: the wait screens have a "continue" button
       // UI is waiting for a click anywhere?
       if (wait_for_user) {
         touch_control_type = CLICK;
@@ -196,6 +196,7 @@ void Touch::touch(touch_control_t *control) {
       ui.refresh();
       break;
     case SLIDER:    hold(control); ui.encoderPosition = (x - control->x) * control->data / control->width; break;
+    #if DISABLED(QQS_UI)   // QQS-Pro: Marlin's edit screens / status-screen controls are not used
     case INCREASE:  hold(control, repeat_delay - 5); TERN(AUTO_BED_LEVELING_UBL, ui.external_control ? bedlevel.encoder_diff++ : ui.encoderPosition++, ui.encoderPosition++); break;
     case DECREASE:  hold(control, repeat_delay - 5); TERN(AUTO_BED_LEVELING_UBL, ui.external_control ? bedlevel.encoder_diff-- : ui.encoderPosition--, ui.encoderPosition--); break;
     case HEATER:
@@ -249,14 +250,17 @@ void Touch::touch(touch_control_t *control) {
         MenuItem_int3::action(GET_TEXT_F(MSG_FLOW_N), &planner.flow_percentage[MenuItemBase::itemIndex], 10, 999, []{ planner.refresh_e_factor(MenuItemBase::itemIndex); });
       #endif
       break;
+    #endif // !QQS_UI
 
     #if ENABLED(AUTO_BED_LEVELING_UBL)
       case UBL: hold(control, UBL_REPEAT_DELAY); ui.encoderPosition += control->data; break;
     #endif
 
+    #if DISABLED(QQS_UI)
     case MOVE_AXIS:
       ui.goto_screen((screenFunc_t)ui.move_axis_screen);
       break;
+    #endif
 
     // TODO: TOUCH could receive data to pass to the callback
     case BUTTON:

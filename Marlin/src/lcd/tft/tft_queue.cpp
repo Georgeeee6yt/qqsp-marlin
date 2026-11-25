@@ -117,9 +117,11 @@ void TFT_Queue::canvas(queueTask_t *task) {
       case CANVAS_SET_BACKGROUND:
         Canvas.SetBackground(((parametersCanvasBackground_t *)item)->color);
         break;
+      #if DISABLED(QQS_UI)   // QQS-Pro: text goes through qqs_font (CANVAS_ADD_IMAGE), never Marlin's fonts
       case CANVAS_ADD_TEXT:
         Canvas.AddText(((parametersCanvasText_t *)item)->x, ((parametersCanvasText_t *)item)->y, ((parametersCanvasText_t *)item)->color, item + sizeof(parametersCanvasText_t), ((parametersCanvasText_t *)item)->maxWidth);
         break;
+      #endif
 
       case CANVAS_ADD_IMAGE:
         MarlinImage image;
