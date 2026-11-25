@@ -5,11 +5,11 @@ QQS-Pro v3.2.9: test G-code for tuning Smooth LA on the delta (round bed, radius
   python3 make_la_tests.py [outdir]
 
 Writes
-  LA0_air_E.gcode     air extrusion, no printing: which E speed / acceleration the stealthChop
+  LA0_AIR.gcode       air extrusion, no printing: which E speed / acceleration the stealthChop
                       extruder can do without skipping (mark the filament, net E is 0)
-  LA1_K_tower.gcode   K sweep, one value every 5 mm
-  LA2_U_tower.gcode   U (release tau) sweep, K from the top line (edit it)
-  LA3_J_tower.gcode   J (release K) sweep, K / U from the top line (edit them)
+  LA1_K.gcode         K sweep, one value every 5 mm
+  LA2_U.gcode         U (release tau) sweep, K from the top line (edit it)
+  LA3_J.gcode         J (release K) sweep, K / U from the top line (edit them)
 
 The towers: 40 x 40 mm single wall, 0.45 x 0.2, each edge = 10 mm slow, 20 mm fast, 10 mm slow,
 so every edge has two speed changes besides the corners. With the right value the line has the
@@ -104,7 +104,7 @@ def air_test():
             g += [f'G1 E4 F{v * 60}', f'G1 E-4 F{v * 60}']
         g += ['M400', 'G4 S3']
     g += ['M501 ; restore the saved limits', f'G1 E-2 F1800', 'M104 S0', 'M117 Air test done', 'M118 air test done']
-    with open(os.path.join(OUT, 'LA0_air_E.gcode'), 'w', newline='\n') as f: f.write('\n'.join(g) + '\n')
+    with open(os.path.join(OUT, 'LA0_AIR.gcode'), 'w', newline='\n') as f: f.write('\n'.join(g) + '\n')
 
 if __name__ == '__main__':
     os.makedirs(OUT, exist_ok=True)
@@ -112,12 +112,12 @@ if __name__ == '__main__':
     common = ['Edge pattern: 10 mm at 25 mm/s, 20 mm at 100 mm/s, 10 mm at 25 mm/s; accel = your M204 P.',
               'ElegooSlicer is not involved. LA values are not saved (no M500).']
     ks = [round(0.1 * i, 2) for i in range(0, 13)]
-    tower('LA1_K_tower.gcode', 'K tower 0.0 .. 1.2 (J = K, B 0.01, U 0.02)', 'K', ks,
+    tower('LA1_K.gcode', 'K tower 0.0 .. 1.2 (J = K, B 0.01, U 0.02)', 'K', ks,
           'M900 J0 B0.01 U0.02 R15 A5000 V0', common + ['Band n (from 1 mm): K = 0.1 x (n-1).'])
     us = [0.01, 0.02, 0.03, 0.05, 0.07, 0.09, 0.11, 0.13, 0.15]
-    tower('LA2_U_tower.gcode', 'U tower 0.01 .. 0.15', 'U', us,
+    tower('LA2_U.gcode', 'U tower 0.01 .. 0.15', 'U', us,
           'M900 K0.60 J0 B0.01 R15 A5000 V0', common + ['Set K in the top M900 line to the K tower result first.'])
     js = [0, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0]
-    tower('LA3_J_tower.gcode', 'J tower 0 (=K) .. 2.0', 'J', js,
+    tower('LA3_J.gcode', 'J tower 0 (=K) .. 2.0', 'J', js,
           'M900 K0.60 U0.05 B0.01 R15 A5000 V0', common + ['Set K and U in the top M900 line first. J0 = same as K.'])
     print('written to', os.path.abspath(OUT))
