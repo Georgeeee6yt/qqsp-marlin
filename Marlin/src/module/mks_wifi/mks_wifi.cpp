@@ -8,6 +8,92 @@
 #include "../../lcd/tft/qqs/qqs_wifi_diag.h"
 
 qqs_wifi_diag_t qqs_wdiag;
+qqs_wifi_net_t qqs_wnet;
+qqs_wifi_scan_t qqs_wscan;
+
+// ---- QQS-Pro: network setup from the printer screen (MKS ESP protocol, see MKS-WIFI MksWifi.ino) ----
+
+// One raw frame: A5 type lenL lenH data FC (no CR LF, unlike mks_wifi_build_packet for non-NET types)
+static void qqs_wifi_frame(const uint8_t type, const uint8_t *d, const uint16_t len) {
+	static uint8_t buf[4 + 1 + 1 + 32 + 1 + 64 + 1];
+	if (len > sizeof(buf) - 5) return;
+	buf[0] = ESP_PROTOC_HEAD;
+	buf[1] = type;
+	buf[2] = len & 0xFF;
+	buf[3] = len >> 8;
+	if (len) memcpy(&buf[4], d, len);
+	buf[4 + len] = ESP_PROTOC_TAIL;
+	mks_wifi_send(buf, 4 + len);          // sends size + 1 bytes (the tail included)
+}
+
+void qqs_wifi_config(const uint8_t mode, const char *ssid, const char *key) {
+	uint8_t d[1 + 1 + 32 + 1 + 64];
+	const uint8_t nl = _MIN(strlen(ssid), (size_t)32), kl = _MIN(strlen(key), (size_t)64);
+	d[0] = mode;
+	d[1] = nl;
+	memcpy(&d[2], ssid, nl);
+	d[2 + nl] = kl;
+	memcpy(&d[3 + nl], key, kl);
+	qqs_wifi_frame(ESP_TYPE_NET, d, 3 + nl + kl);
+	if (mode == WIFI_MODE_STA) {          // same settings as before = no restart; then this starts the connection
+		const uint8_t c = 0x01;
+		qqs_wifi_frame(0x09, &c, 1);
+	}
+}
+
+void qqs_wifi_scan() { qqs_wifi_frame(0x07, nullptr, 0); }
+
+void qqs_wifi_reset() {
+	WRITE(MKS_WIFI_IO_RST, LOW);
+	safe_delay(200);
+	WRITE(MKS_WIFI_IO_RST, HIGH);
+}
+
+// Type 0 from the ESP: ip[4] port[2] state mode nameLen name keyLen key ...
+static void qqs_net_parse(const uint8_t *d, const uint16_t len) {
+	if (len < 10) return;
+	const uint8_t nl = d[8];
+	if (nl > 32 || 10u + nl > len) return;
+	const uint8_t kl = d[9 + nl];
+	if (kl > 64 || 10u + nl + kl > len) return;
+	qqs_wnet.state = d[6];
+	qqs_wnet.mode = d[7];
+	memcpy(qqs_wnet.ssid, &d[9], nl);  qqs_wnet.ssid[nl] = 0;
+	memcpy(qqs_wnet.key, &d[10 + nl], kl); qqs_wnet.key[kl] = 0;
+	qqs_wnet.reports++;
+}
+
+// Type 4 from the ESP: count, then per network: nameLen name rssi(int8)
+static void qqs_list_parse(const uint8_t *d, const uint16_t len) {
+	if (!len) return;
+	qqs_wifi_scan_t &s = qqs_wscan;
+	uint8_t n = 0;
+	uint16_t i = 1;
+	for (uint8_t k = 0; k < d[0] && i < len; k++) {
+		const uint8_t l = d[i++];
+		if (l > 32 || i + l + 1u > len) break;
+		const uint8_t *nm = &d[i];
+		i += l;
+		const int8_t r = (int8_t)d[i++];
+		if (!l) continue;                   // hidden network
+		int8_t same = -1;
+		for (uint8_t j = 0; j < n; j++)
+			if (!strncmp(s.name[j], (const char *)nm, l) && !s.name[j][l]) { same = j; break; }
+		if (same >= 0) { if (r > s.rssi[same]) s.rssi[same] = r; continue; }
+		if (n >= QQS_WSCAN_MAX) continue;
+		memcpy(s.name[n], nm, l); s.name[n][l] = 0;
+		s.rssi[n] = r;
+		n++;
+	}
+	// strongest first
+	for (uint8_t a = 1; a < n; a++)
+		for (uint8_t b = a; b && s.rssi[b] > s.rssi[b - 1]; b--) {
+			char t[33]; memcpy(t, s.name[b], 33); memcpy(s.name[b], s.name[b - 1], 33); memcpy(s.name[b - 1], t, 33);
+			const int8_t q = s.rssi[b]; s.rssi[b] = s.rssi[b - 1]; s.rssi[b - 1] = q;
+		}
+	s.n = n;
+	s.seq++;
+}
 
 static void qqs_diag_copy(char *dst, const char *src) {   // 27 printable chars max
 	uint8_t i = 0;
@@ -136,9 +222,14 @@ uint8_t mks_wifi_input(uint8_t data){
 	// if (CardReader::isPrinting()){
 	// 	DEBUG("No input while printing");
 	// 	return 1;
-	// }	
-	
-	if(data == ESP_PROTOC_HEAD){
+	// }
+
+	// QQS-Pro: 0xA5 inside a binary packet is data (network status: an IP octet of 165; scan list: UTF-8
+	// names; upload start: file size bytes; any length byte). It restarts a packet only where the type
+	// byte should be, or inside G-code text. A false start (stray 0xA5) is dropped at once by the type or
+	// length check; a cut-off packet is caught by the tail check, which re-parses from the next 0xA5.
+	// (No timeout: while the command queue is full Marlin stops reading, so a packet may arrive in parts.)
+	if(data == ESP_PROTOC_HEAD && (!packet_start_flag || packet_index == 1 || (packet_index >= 4 && packet_type == ESP_TYPE_GCODE))){
 		payload_size = ESP_PACKET_DATA_MAX_SIZE;
 		packet_start_flag=1;
 		packet_index=0;
@@ -155,6 +246,12 @@ uint8_t mks_wifi_input(uint8_t data){
 
 	if(packet_index == 1){
 		packet_type = mks_in_buffer[1];
+		if(packet_type > 9){                 // QQS-Pro: not a protocol type -> not a real head
+			qqs_wdiag.rx_stray++;
+			packet_start_flag=0;
+			packet_index=0;
+			return 1;
+		}
 	}
 
 	if(packet_index == 3){
@@ -176,6 +273,22 @@ uint8_t mks_wifi_input(uint8_t data){
 			qqs_wdiag.rx_bad++;
 			ERROR("Packet check failed");
 			packet_start_flag=0;
+			// QQS-Pro: the packet was cut off and swallowed what followed; parse again from the next head
+			static bool rescanning = false;
+			static uint8_t rescan_buf[MKS_IN_BUFF_SIZE];
+			if(!rescanning){
+				uint16_t k = 1;
+				while(k <= packet_index && mks_in_buffer[k] != ESP_PROTOC_HEAD) k++;
+				const uint16_t n = (k <= packet_index) ? packet_index + 1 - k : 0;
+				packet_index=0;
+				if(n){
+					memcpy(rescan_buf, (const uint8_t *)&mks_in_buffer[k], n);
+					rescanning = true;
+					for(uint16_t i = 0; i < n; i++) mks_wifi_input(rescan_buf[i]);
+					rescanning = false;
+				}
+				return 1;   // a packet the re-parse started stays in progress
+			}
 			packet_index=0;
 			return 1;
 		}
@@ -267,6 +380,7 @@ void mks_wifi_parse_packet(ESP_PROTOC_FRAME *packet){
 	if (packet->type < 5) qqs_wdiag.rx_pkt[packet->type]++; else qqs_wdiag.rx_other++;
 	switch(packet->type){
 		case ESP_TYPE_NET:
+			qqs_net_parse(packet->data, packet->dataLen);
 			memset(str,0,100);
 			if(packet->data[6] == ESP_NET_WIFI_CONNECTED){
 				memcpy(mks_wifi_ip, packet->data, 4);
@@ -343,6 +457,7 @@ void mks_wifi_parse_packet(ESP_PROTOC_FRAME *packet){
 			break;
 		case ESP_TYPE_WIFI_LIST:
 			DEBUG("[WIFI_LIST]");
+			qqs_list_parse(packet->data, packet->dataLen);
 			break;
 		default:
 			DEBUG("[Unkn]");

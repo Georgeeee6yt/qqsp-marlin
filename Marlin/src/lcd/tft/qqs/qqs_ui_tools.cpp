@@ -20,11 +20,6 @@
 #include "../../../module/delta.h"
 #include "../../../module/settings.h"
 #include "../../../gcode/queue.h"
-#include "qqs_wifi_diag.h"
-#ifdef MKS_WIFI
-  extern uint8_t mks_wifi_ip[4];
-  extern uint8_t mks_wifi_net_state;
-#endif
 #if HAS_FILAMENT_SENSOR
   #include "../../../feature/runout.h"
 #endif
@@ -269,69 +264,7 @@ namespace qqs {
   }
 
 
-  // =========================================================================
-  // Wi-Fi diagnostics (third tab of machine info)
-  // =========================================================================
-
-  static void wifi_screen() {
-    static millis_t next_ms = 0;
-    ui.defer_status_screen();
-    if (!live(next_ms, 1000)) return;
-
-    touch.clear();
-    header("機器資訊", go_settings);
-    info_tabs(2);
-    canvas(0, HEADER_H + 32, TFT_WIDTH, TFT_HEIGHT - HEADER_H - 32, C_BG);
-    const qqs_wifi_diag_t &d = qqs_wdiag;
-    char v[64];
-    int16_t y = 2;
-    auto row = [&](const char *label, const char *val, const uint16_t col = C_TEXT) {
-      text(6, y, F_S, C_MUTED, C_BG, label);
-      text(70, y, F_S, col, C_BG, val);
-      y += 17;
-    };
-
-    #ifdef MKS_WIFI
-      if (mks_wifi_net_state == 1) sprintf_P(v, PSTR("已連線 %u.%u.%u.%u"), mks_wifi_ip[0], mks_wifi_ip[1], mks_wifi_ip[2], mks_wifi_ip[3]);
-      else strcpy_P(v, mks_wifi_net_state == 2 ? PSTR("異常") : (mks_wifi_net_state == 3 ? PSTR("未設定") : PSTR("沒收到狀態")));
-      row("連線", v, mks_wifi_net_state == 1 ? C_OK : C_WARN);
-    #endif
-    sprintf_P(v, PSTR("網路 %lu  G-code %lu  檔案 %lu  壞 %lu  雜 %lu"), (unsigned long)d.rx_pkt[0], (unsigned long)d.rx_pkt[1],
-              (unsigned long)d.rx_pkt[2], (unsigned long)(d.rx_bad + d.rx_other), (unsigned long)d.rx_stray);
-    row("收到", v);
-    row("最近收到", *d.last_in[d.last_in_i] ? d.last_in[d.last_in_i] : "—", C_COLD);
-    sprintf_P(v, PSTR("%lu 行　逾時 %lu"), (unsigned long)d.tx_lines, (unsigned long)d.tx_timeouts);
-    row("送出", v, d.tx_timeouts ? C_WARN : C_TEXT);
-    row("最近送出", *d.last_out ? d.last_out : "—", C_COLD);
-
-    if (!d.up_count) { row("上傳", "還沒有上傳過", C_DIM); return; }
-    sprintf_P(v, PSTR("%s  %lu B"), d.up_name, (unsigned long)d.up_size);
-    row("上次上傳", v);
-    const char *why;
-    switch (d.up_reason) {
-      case 'O': why = "成功"; break;
-      case 'T': why = d.up_pk ? "中途沒資料了（逾時）" : "完全沒收到資料（逾時）"; break;
-      case 'H': why = "封包開頭錯（速率／雜訊）"; break;
-      case 'S': why = "封包跳號（漏收）"; break;
-      case 'W': why = "寫 SD 失敗"; break;
-      case 'E': why = "DMA 錯誤"; break;
-      case 'Z': why = "收完但大小不符"; break;
-      case 'M': why = "SD 掛載失敗"; break;
-      case 'F': why = "開檔失敗"; break;
-      default:  why = "進行中／未知"; break;
-    }
-    sprintf_P(v, PSTR("%c %s"), d.up_reason, why);
-    row("結果", v, d.up_reason == 'O' ? C_OK : C_STOP);
-    sprintf_P(v, PSTR("封包 %lu　收 %lu　寫 %lu"), (unsigned long)d.up_pk, (unsigned long)d.up_recv, (unsigned long)d.up_written);
-    row("數量", v);
-    sprintf_P(v, PSTR("剩 %u／1024　SR %04X　IO4 %c"), d.up_cndtr, d.up_sr, d.up_io4 ? 'H' : 'L');
-    row("DMA", v);
-    sprintf_P(v, PSTR("%02X %02X %02X %02X %02X %02X %02X %02X"), d.up_first[0], d.up_first[1], d.up_first[2], d.up_first[3],
-              d.up_first[4], d.up_first[5], d.up_first[6], d.up_first[7]);
-    row("開頭", v);
-  }
-
-  void go_wifi() { ui.goto_screen(wifi_screen); }
+  // Wi-Fi tab, network setup and diagnostics: qqs_ui_wifi.cpp
 
   // ---- Endstop repeatability ----
 

@@ -19,7 +19,7 @@ import cairosvg
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOOLS = os.path.join(ROOT, 'qqs_tools')
 OUT_DIR = os.path.join(ROOT, 'Marlin', 'src', 'lcd', 'tft', 'qqs')
-UI_SOURCES = ['qqs_ui.cpp', 'qqs_ui_tools.cpp', 'qqs_draw.cpp', 'qqs_motion.cpp']
+UI_SOURCES = ['qqs_ui.cpp', 'qqs_ui_tools.cpp', 'qqs_ui_wifi.cpp', 'qqs_draw.cpp', 'qqs_motion.cpp']
 
 FONT_FILE = '/usr/share/fonts/opentype/noto/NotoSansCJK-Medium.ttc'
 FONT_INDEX = 3   # Noto Sans CJK TC Medium

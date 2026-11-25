@@ -27,3 +27,28 @@ struct qqs_wifi_diag_t {
 };
 
 extern qqs_wifi_diag_t qqs_wdiag;
+
+// Network state as the ESP reports it (type 0 packet, every 10 s; every 0.5 s while it tries to connect)
+struct qqs_wifi_net_t {
+  uint8_t mode;              // 1 AP (its own hotspot), 2 STA (joins a network), 0 nothing heard yet
+  uint8_t state;             // raw: 0x0A up / connected, 0x0E exception, other = not connected
+  char ssid[33];             // STA: network it joins; AP: its own hotspot name
+  char key[65];              // password it holds (plain text, as the ESP reports it)
+  uint16_t reports;          // type 0 packets parsed (wraps)
+};
+extern qqs_wifi_net_t qqs_wnet;
+
+// Last scan result (type 4 packet, answer to type 7). The ESP drops networks weaker than -78 dBm.
+#define QQS_WSCAN_MAX 16
+struct qqs_wifi_scan_t {
+  uint8_t n;                 // networks below, strongest first, duplicates merged
+  uint16_t seq;              // bumps on every list received
+  int8_t rssi[QQS_WSCAN_MAX];
+  char name[QQS_WSCAN_MAX][33];
+};
+extern qqs_wifi_scan_t qqs_wscan;
+
+// Printer -> ESP. The ESP saves new settings in its own flash and restarts by itself when they differ.
+void qqs_wifi_config(const uint8_t mode, const char *ssid, const char *key);   // type 0 (+ type 9 "connect" for STA)
+void qqs_wifi_scan();                                                           // type 7 (in AP mode this drops the hotspot)
+void qqs_wifi_reset();                                                          // pulse the module reset: back to its saved settings
