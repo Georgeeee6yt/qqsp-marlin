@@ -34,6 +34,9 @@
 #endif
 
 extern bool wait_for_user;
+#if ENABLED(TOUCH_SCREEN_CALIBRATION)
+  void touch_screen_calibration();   // menu_touch_screen.cpp (settings tile, long press)
+#endif
 
 namespace qqs {
 
@@ -239,7 +242,7 @@ namespace qqs {
   void sys_poll() {
     if (!wait_for_user || in_pause_screen() || ui.currentScreen == wait_screen) return;
     #if ENABLED(TOUCH_SCREEN_CALIBRATION)
-      if (ui.currentScreen == MarlinUI::touch_calibration_screen) return;
+      if (ui.currentScreen == MarlinUI::touch_calibration_screen || ui.currentScreen == touch_screen_calibration) return;
     #endif
     ws_prev = ui.on_status_screen() ? nullptr : ui.currentScreen;
     ws_drawn = false;
