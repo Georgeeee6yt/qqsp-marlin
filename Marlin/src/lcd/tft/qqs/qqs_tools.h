@@ -17,11 +17,15 @@
  * Everything that measures heights runs in the calibration frame (layer offset out of H), so the first-layer
  * offset survives G33 and is not baked into the mesh.
  *   M2007 R<n>            Probe repeatability: n (2..10) probes at the centre -> qqs::pj.z[]
- *   M2007 P               Probe height, step 1: calibration frame, G28, probe the centre (-> pj.measured), stow,
+ *   M2007 H               Probe height, step 1: calibration frame, G28, probe the centre (-> pj.measured), stow,
  *                         nozzle to Z1 over the centre. Step 2 is the paper test with M2006 Z; then M851 Z + M2006 S0.
  *   M2007 C P<points>     Delta auto calibration: G33 P<points> in the calibration frame. Old values kept for M2007 U.
  *   M2007 U               Undo the last M2007 C: reload the saved settings (M501: geometry AND the mesh G33 cleared), G28.
  *   M2007 M               Bilinear mesh: G29 in the calibration frame (leveling stays on).
+ *   M2007 A P<points>     One go for the magnetic probe (George 2026-11-25): G28, 20 mm down, wait for the probe
+ *                         to be put on and tapped (untriggered -> triggered), Z+5 at 3000 mm/s^2 + 50 ms beep,
+ *                         3 s countdown (time to take the hand away), G28, G33, G29 with the probe held on (no
+ *                         prompts in between), then "take the probe off" and G28. pj.abort cancels the waits.
  */
 #pragma once
 
@@ -66,7 +70,12 @@ namespace qqs {
     millis_t start_ms, end_ms;
     // 'C': values before (actual frame) and after, for the result page and M2007 U
     float oldH, oldR, old_adj[3], old_ang[3], newH, newR, new_adj[3], new_ang[3];
-    bool had_mesh;                // 'C': a mesh existed before (G33 clears it: it no longer fits the new geometry)
+    bool had_mesh;
+    // 'A': stage for the UI, countdown, cancel request, results of the two parts
+    enum : uint8_t { AS_HOME, AS_WAIT, AS_COUNT, AS_G33, AS_G29, AS_STOW, AS_DONE } ;
+    volatile uint8_t stage, count;
+    volatile bool abort;
+    bool g33_ok, mesh_ok;                // 'C': a mesh existed before (G33 clears it: it no longer fits the new geometry)
     char sd[12];                  // 'C': "0.012" from G33's status line, "" if it did not finish
   };
   extern ProbeJob pj;

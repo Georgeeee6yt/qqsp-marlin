@@ -63,7 +63,8 @@ namespace qqs {
   static bool can_start() { return qqs_settings.probe_installed && prb_seen && !job_active() && !pj.running; }
 
   static void job_start(const char kind, const char *cmd) {
-    if (!can_start()) return;
+    // 'A' waits for the probe tap itself: no prior check needed
+    if (kind == 'A' ? !(qqs_settings.probe_installed && !job_active() && !pj.running) : !can_start()) return;
     pj.done = false; pj.kind = kind;
     if (!run(cmd)) return;
     job_ms = millis();
@@ -78,6 +79,7 @@ namespace qqs {
   static void rp_result_screen();
   static void dc_result_screen();
   static void ph_fail_screen();
+  static void au_result_screen();
   static float ph_z = 1.0f;
 
   static const char *job_title() {
@@ -85,20 +87,29 @@ namespace qqs {
       case 'P': return "探頭高度";
       case 'R': return "探頭一致性";
       case 'C': return "Delta 自動校準";
+      case 'A': return "一鍵校準＋網格";
       default:  return "自動網格";
     }
   }
 
   static void job_noback() { ui.set_status("量測中不能離開"); redraw(); }
 
+  static void au_cancel() { pj.abort = true; ui.set_status("取消中…"); }
+
   void job_screen() {
     static millis_t next_ms = 0;
+    static uint16_t sig = 0xFFFF;
     ui.defer_status_screen();
+    if (pj.kind == 'A') {                     // stage / countdown changes redraw at once
+      const uint16_t s = (uint16_t(pj.stage) << 8) | pj.count;
+      if (s != sig) { sig = s; redraw(); }
+    }
     if (pj.done && !pj.running) {             // finished: go to its result
       switch (pj.kind) {
         case 'P': if (pj.ok) { ph_z = 1.0f; ui.goto_screen(ph_paper_screen); } else ui.goto_screen(ph_fail_screen); return;
         case 'R': ui.goto_screen(rp_result_screen); return;
         case 'C': ui.goto_screen(dc_result_screen); return;
+        case 'A': ui.goto_screen(au_result_screen); return;
         default:  if (!pj.ok) ui.set_status("網格沒有建立完成"); go_mesh(); return;
       }
     }
@@ -109,6 +120,44 @@ namespace qqs {
 
     char v[48];
     const char *m = ui.status_message;
+    if (pj.kind == 'A') {
+      switch (pj.stage) {
+        case ProbeJob::AS_WAIT:
+          text_c(0, 24, TFT_WIDTH, F_L, C_ACCENT, C_BG, "請裝上探頭");
+          text_c(0, 72, TFT_WIDTH, F_M, C_TEXT, C_BG, "裝好後用手按一下探頭");
+          text_c(0, 104, TFT_WIDTH, F_S, C_MUTED, C_BG, "按下後噴頭會往上 5 mm，再倒數 3 秒開始。");
+          break;
+        case ProbeJob::AS_COUNT:
+          sprintf_P(v, PSTR("%u"), pj.count);
+          text_c(0, 10, TFT_WIDTH, F_XL, C_ACCENT, C_BG, v);
+          text_c(0, 72, TFT_WIDTH, F_M, C_TEXT, C_BG, "手離開機器");
+          text_c(0, 104, TFT_WIDTH, F_S, C_MUTED, C_BG, "倒數完會歸零，接著自動校準和網格。");
+          break;
+        default: {
+          if (pj.stage == ProbeJob::AS_HOME) strcpy_P(v, PSTR("歸零、下降 20 mm…"));   // drawn with F_L
+          else if (pj.stage == ProbeJob::AS_G33) {
+            if (!strncmp_P(m, PSTR("Iteration"), 9)) sprintf_P(v, PSTR("校準第 %d 輪"), atoi(m + 11));   // drawn with F_L
+            else strcpy_P(v, PSTR("Delta 校準中…"));   // drawn with F_L
+          }
+          else if (pj.stage == ProbeJob::AS_G29) {
+            const char *p_ = strstr_P(m, PSTR("Point "));
+            if (p_) sprintf_P(v, PSTR("網格第 %s 點"), p_ + 6); else strcpy_P(v, PSTR("網格：歸零中…"));   // drawn with F_L
+          }
+          else strcpy_P(v, PSTR("收尾中…"));   // drawn with F_L
+          text_c(0, 40, TFT_WIDTH, F_L, C_TEXT, C_BG, v);
+          const uint32_t s = (millis() - job_ms) / 1000;
+          sprintf_P(v, PSTR("已經 %lu:%02lu"), (unsigned long)(s / 60), (unsigned long)(s % 60));
+          text_c(0, 90, TFT_WIDTH, F_M, C_MUTED, C_BG, v);
+          text_c(0, 130, TFT_WIDTH, F_S, C_MUTED, C_BG, "探頭保持裝著，全部量完才會請你取下。");
+          text_c(0, 148, TFT_WIDTH, F_S, C_MUTED, C_BG, "量的時候不要碰機器。");
+        }
+      }
+      if (pj.stage == ProbeJob::AS_WAIT || pj.stage == ProbeJob::AS_COUNT) {
+        Btn c; c.icon = &qqs_i18_x; c.label = pj.abort ? "取消中…" : "取消"; c.enabled = !pj.abort;
+        button(4, 180, 312, 56, c, au_cancel);
+      }
+      return;
+    }
     switch (pj.kind) {
       case 'R': sprintf_P(v, PSTR("量第 %u/%u 次"), pj.i + (pj.running ? 1 : 0), pj.n ? pj.n : 10); break;   // drawn with F_L
       case 'P': strcpy_P(v, pj.running ? PSTR("歸零後用探頭量中心…") : PSTR("準備中…")); break;   // drawn with F_L
@@ -134,6 +183,7 @@ namespace qqs {
   // =========================================================================
 
   static void go_heights() ;
+  static void go_auto();
   static void go_rep()  { job_start('R', "M2007 R10"); }
   static void go_dcal();
 
@@ -181,8 +231,11 @@ namespace qqs {
     button(110, 126, 101, 52, r, go_rep);
     Btn d; d.icon = &qqs_i18_target; d.label = "Delta 校準"; d.enabled = en;
     button(216, 126, 100, 52, d, go_dcal);
+    Btn au; au.icon = &qqs_i18_player_play; au.label = "一鍵校準＋網格"; au.fg = C_ACCENT; au.border = C_ACCENT;
+    au.enabled = !job_active() && !pj.running;
+    button(4, 184, 207, 52, au, go_auto);
     Btn m; m.icon = &qqs_i18_grid_dots; m.label = "自動網格";
-    button(4, 184, 312, 52, m, go_mesh);
+    button(216, 184, 100, 52, m, go_mesh);
   }
 
   void go_probe() {
@@ -195,7 +248,7 @@ namespace qqs {
   // Probe height (M851 Z): probe the centre, then the paper test at the same spot
   // =========================================================================
 
-  static void ph_start() { job_start('P', "M2007 P"); }
+  static void ph_start() { job_start('P', "M2007 H"); }
 
   static void ph_intro_screen() {
     static millis_t next_ms = 0;
@@ -407,6 +460,88 @@ namespace qqs {
     if (pj.had_mesh) text_r(316, 128, F_S, C_WARN, C_BG, "網格已清除，要重建");
     Btn u; u.icon = &qqs_i18_restore; u.label = "還原"; button(4, 180, 154, 56, u, dc_undo);
     Btn s; s.icon = &qqs_i18_device_floppy; s.label = "存檔"; s.fg = C_ACCENT; s.border = C_ACCENT; button(162, 180, 154, 56, s, dc_save);
+  }
+
+  // =========================================================================
+  // One go (magnetic probe): tap the probe, countdown, G33, G29
+  // =========================================================================
+
+  static void au_start() {
+    char cmd[16];
+    sprintf_P(cmd, PSTR("M2007 A P%u"), dc_points);
+    job_start('A', cmd);
+  }
+
+  static void au_intro_screen() {
+    static millis_t next_ms = 0;
+    ui.defer_status_screen();
+    if (!live(next_ms, 60000)) return;
+    touch.clear();
+    header("一鍵校準＋網格", go_probe);
+    canvas(0, HEADER_H, TFT_WIDTH, 92, C_BG);
+    text(10, 4,  F_S, C_TEXT, C_BG, "1. 歸零後下降 20 mm，請裝上探頭，按一下探頭。");
+    text(10, 22, F_S, C_TEXT, C_BG, "2. 噴頭往上 5 mm，倒數 3 秒：手離開。");
+    text(10, 40, F_S, C_TEXT, C_BG, "3. 歸零、Delta 校準、網格，探頭全程裝著。");
+    text(10, 58, F_S, C_TEXT, C_BG, "4. 量完請取下探頭，再決定存不存。");
+    text(10, 76, F_S, C_DIM, C_BG, "探頭高度要先量好。大約 15～25 分鐘。");
+    Btn p3; p3.label = "7 點"; p3.sub = "中心、三塔、對面"; if (dc_points == 3) { p3.fg = C_ACCENT; p3.border = C_ACCENT; }
+    button(4, 128, 154, 48, p3, dc_p3);
+    Btn p6; p6.label = "多點平均"; p6.sub = "比較久"; if (dc_points == 6) { p6.fg = C_ACCENT; p6.border = C_ACCENT; }
+    button(162, 128, 154, 48, p6, dc_p6);
+    Btn s; s.icon = &qqs_i18_player_play; s.label = "開始"; s.fg = C_ACCENT; s.border = C_ACCENT;
+    s.enabled = qqs_settings.probe_installed && !job_active() && !pj.running;
+    button(4, 182, 312, 54, s, au_start);
+  }
+  static void go_auto() { ui.goto_screen(au_intro_screen); }
+
+  static void au_undo() { if (run("M2007 U")) { ui.set_status("已讀回存檔的值"); go_probe(); } }
+  static void au_save() { if (run("M500")) { ui.set_status("校準和網格已存"); go_mesh(); } }
+
+  static void au_result_screen() {
+    static millis_t next_ms = 0;
+    ui.defer_status_screen();
+    if (!live(next_ms, 60000)) return;
+    touch.clear();
+    header("一鍵校準＋網格：結果", au_undo);
+    canvas(0, HEADER_H, TFT_WIDTH, 146, C_BG);
+    char v[56], a[16], b[16];
+    if (pj.abort) {
+      text_c(0, 30, TFT_WIDTH, F_M, C_WARN, C_BG, "已取消");
+      text_c(0, 64, TFT_WIDTH, F_S, C_MUTED, C_BG, "什麼都沒改。");
+      Btn c; c.icon = &qqs_i18_chevron_left; c.label = "返回"; button(4, 180, 312, 56, c, go_probe);
+      return;
+    }
+    if (!pj.g33_ok) {
+      text_c(0, 24, TFT_WIDTH, F_M, C_STOP, C_BG, "Delta 校準沒有完成");
+      text_c(0, 58, TFT_WIDTH, F_S, C_MUTED, C_BG, "探頭沒量到，或點太偏。按「還原」讀回存檔的值。");
+      Btn u; u.icon = &qqs_i18_restore; u.label = "還原"; button(4, 180, 312, 56, u, au_undo);
+      return;
+    }
+    sprintf_P(v, PSTR("標準差 %s mm"), pj.sd);   // drawn with F_L
+    const float sdv = atof(pj.sd);
+    text_c(0, 0, TFT_WIDTH, F_L, sdv <= 0.02f ? C_OK : sdv <= 0.04f ? C_WARN : C_STOP, C_BG, v);
+    char r1[16], r2[16];
+    sprintf_P(v, PSTR("H %s → %s　半徑 %s → %s"), f2(a, pj.oldH), f2(b, pj.newH), f2(r1, pj.oldR), f2(r2, pj.newR));
+    text_c(0, 40, TFT_WIDTH, F_S, C_TEXT, C_BG, v);
+    char c3[16];
+    sprintf_P(v, PSTR("三塔 %s %s %s"), f2(a, pj.new_adj[0]), f2(b, pj.new_adj[1]), f2(c3, pj.new_adj[2]));
+    text_c(0, 58, TFT_WIDTH, F_S, C_MUTED, C_BG, v);
+    if (pj.mesh_ok) {
+      float lo = 99, hi = -99;
+      constexpr float R = DELTA_PRINTABLE_RADIUS - (PROBING_MARGIN);
+      for (uint8_t j = 0; j < GRID_MAX_POINTS_Y; j++) for (uint8_t i = 0; i < GRID_MAX_POINTS_X; i++) {
+        const float z = bedlevel.z_values[i][j];
+        if (isnan(z) || HYPOT(bedlevel.get_mesh_x(i), bedlevel.get_mesh_y(j)) > R + 0.5f) continue;
+        NOMORE(lo, z); NOLESS(hi, z);
+      }
+      sprintf_P(v, PSTR("網格範圍 %s（使用中）"), f2s(a, hi - lo) + 1);
+      text_c(0, 86, TFT_WIDTH, F_M, C_OK, C_BG, v);
+    }
+    else text_c(0, 86, TFT_WIDTH, F_M, C_WARN, C_BG, "網格沒有建立完成");
+    text_c(0, 118, TFT_WIDTH, F_S, C_DIM, C_BG, "存檔＝校準和網格一起存。還原＝讀回之前存的。");
+    Btn u; u.icon = &qqs_i18_restore; u.label = "還原"; button(4, 180, 101, 56, u, au_undo);
+    Btn g; g.icon = &qqs_i18_grid_dots; g.label = "看網格"; g.enabled = pj.mesh_ok; button(110, 180, 101, 56, g, go_mesh);
+    Btn s; s.icon = &qqs_i18_device_floppy; s.label = "存檔"; s.fg = C_ACCENT; s.border = C_ACCENT; button(216, 180, 100, 56, s, au_save);
   }
 
   // =========================================================================

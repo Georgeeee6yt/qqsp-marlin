@@ -512,6 +512,13 @@ bool Probe::set_deployed(const bool deploy) {
     DEBUG_ECHOLNPGM("deploy: ", deploy);
   }
 
+  #if ENABLED(QQS_UI)
+    // QQS-Pro M2007 A: the magnetic probe was put on by hand and stays on for G33 + G29. Keep it
+    // "deployed" (endstop monitored), no deploy / stow prompts in between.
+    extern bool qqs_probe_hold;
+    if (qqs_probe_hold) { endstops.enable_z_probe(true); return false; }
+  #endif
+
   if (endstops.z_probe_enabled == deploy) return false;
 
   // Make room for probe to deploy (or stow)

@@ -17,6 +17,10 @@
 #include "../../../gcode/gcode.h"
 #include "../../../gcode/parser.h"
 #include "../../../module/probe.h"
+#include "../../../MarlinCore.h"
+#if HAS_BUZZER
+  #include "../../../libs/buzzer.h"
+#endif
 #include "../../../feature/bedlevel/bedlevel.h"
 #include "../../marlinui.h"
 #if HAS_BED_PROBE
@@ -304,6 +308,7 @@ void qqs_M2006() {
 
 namespace qqs { ProbeJob pj; }
 float qqs_g33_sd = NAN;   // set by G33 when it reports "Calibration OK"
+bool qqs_probe_hold = false;   // M2007 A: probe stays "deployed" (probe.cpp skips deploy / stow)
 
 static void pj_begin(const char kind) {
   pj.kind = kind; pj.ok = false; pj.done = false; pj.running = true;
@@ -311,6 +316,61 @@ static void pj_begin(const char kind) {
 }
 static void pj_end(const bool ok) {
   pj.ok = ok; pj.running = false; pj.done = true; pj.end_ms = millis();
+}
+
+// G33 in the calibration frame, old / new values into pj. Returns whether G33 got a result.
+static bool do_g33(const uint8_t pts) {
+  pj.oldH = delta_height; pj.oldR = delta_radius;
+  LOOP_ABC(i) { pj.old_adj[i] = delta_endstop_adj[i]; pj.old_ang[i] = delta_tower_angle_trim[i]; }
+  pj.sd[0] = 0;
+  pj.had_mesh = bedlevel.has_mesh();
+  cal_frame(true);
+  char cmd[16];
+  sprintf_P(cmd, PSTR("G33 P%u"), constrain(pts, 2, 10));
+  qqs_g33_sd = NAN;
+  gcode.process_subcommands_now(cmd);
+  const bool ok = !isnan(qqs_g33_sd);          // G33 got to "Calibration OK" (probe failures return before)
+  if (ok) { const uint32_t u = uint32_t(constrain(lroundf(qqs_g33_sd * 1000.0f), 0L, 99999L)); sprintf_P(pj.sd, PSTR("%u.%03u"), unsigned(u / 1000) % 100, unsigned(u % 1000)); }
+  cal_frame(false);                             // put the layer offset back into the new H
+  pj.newH = delta_height; pj.newR = delta_radius;
+  LOOP_ABC(i) { pj.new_adj[i] = delta_endstop_adj[i]; pj.new_ang[i] = delta_tower_angle_trim[i]; }
+  return ok;
+}
+
+// G28 + G29 in the calibration frame. Returns whether a mesh is there and on.
+static bool do_g29() {
+  cal_frame(true);
+  gcode.process_subcommands_now(F("G28\nG29"));
+  cal_frame(false);
+  return bedlevel.has_mesh() && planner.leveling_active;
+}
+
+// Wait (UI running) for the probe to go untriggered -> triggered (20 ms stable). false = cancelled.
+static bool wait_probe_tap() {
+  KEEPALIVE_STATE(PAUSED_FOR_USER);
+  bool was_free = false;
+  millis_t on_ms = 0;
+  while (!pj.abort) {
+    idle();
+    if (!PROBE_TRIGGERED()) { was_free = true; on_ms = 0; continue; }
+    if (!was_free) continue;
+    if (!on_ms) on_ms = millis();
+    else if (ELAPSED(millis(), on_ms + 20)) return true;
+  }
+  return false;
+}
+
+// Short quick move up after the tap: Z+5 at 3000 mm/s^2 (limits restored afterwards)
+static void tap_lift() {
+  const float ta = planner.settings.travel_acceleration;
+  uint32_t mx[3];
+  LOOP_ABC(i) { mx[i] = planner.settings.max_acceleration_mm_per_s2[i]; NOLESS(planner.settings.max_acceleration_mm_per_s2[i], 3000UL); }
+  planner.settings.travel_acceleration = 3000;
+  planner.refresh_acceleration_rates();
+  do_blocking_move_to_z(current_position.z + 5, 50);
+  planner.settings.travel_acceleration = ta;
+  LOOP_ABC(i) planner.settings.max_acceleration_mm_per_s2[i] = mx[i];
+  planner.refresh_acceleration_rates();
 }
 
 void qqs_M2007() {
@@ -331,7 +391,7 @@ void qqs_M2007() {
     return;
   }
 
-  if (parser.seen_test('P')) {                  // probe height, step 1
+  if (parser.seen_test('H')) {                  // probe height, step 1 (H: 'P' is the G33 points of C / A)
     pj_begin('P');
     cal_frame(true);
     gcode.process_subcommands_now(F("G28"));
@@ -348,21 +408,7 @@ void qqs_M2007() {
 
   if (parser.seen_test('C')) {                  // delta auto calibration
     pj_begin('C');
-    pj.oldH = delta_height; pj.oldR = delta_radius;
-    LOOP_ABC(i) { pj.old_adj[i] = delta_endstop_adj[i]; pj.old_ang[i] = delta_tower_angle_trim[i]; }
-    pj.sd[0] = 0;
-    pj.had_mesh = bedlevel.has_mesh();
-    const uint8_t pts = parser.byteval('P', 3);
-    cal_frame(true);
-    char cmd[16];
-    sprintf_P(cmd, PSTR("G33 P%u"), constrain(pts, 2, 10));
-    qqs_g33_sd = NAN;
-    gcode.process_subcommands_now(cmd);
-    const bool ok = !isnan(qqs_g33_sd);          // G33 got to "Calibration OK" (probe failures return before)
-    if (ok) { const uint32_t u = uint32_t(constrain(lroundf(qqs_g33_sd * 1000.0f), 0L, 99999L)); sprintf_P(pj.sd, PSTR("%u.%03u"), unsigned(u / 1000) % 100, unsigned(u % 1000)); }
-    cal_frame(false);                           // put the layer offset back into the new H
-    pj.newH = delta_height; pj.newR = delta_radius;
-    LOOP_ABC(i) { pj.new_adj[i] = delta_endstop_adj[i]; pj.new_ang[i] = delta_tower_angle_trim[i]; }
+    const bool ok = do_g33(parser.byteval('P', 3));
     gcode.process_subcommands_now(F("G28"));
     pj_end(ok);
     return;
@@ -376,12 +422,51 @@ void qqs_M2007() {
 
   if (parser.seen_test('M')) {                  // bilinear mesh
     pj_begin('M');
-    cal_frame(true);
-    gcode.process_subcommands_now(F("G28\nG29"));
-    cal_frame(false);
-    const bool ok = bedlevel.has_mesh() && planner.leveling_active;
+    const bool ok = do_g29();
     gcode.process_subcommands_now(F("G28"));     // leveling stays on (RESTORE_LEVELING_AFTER_G28)
     pj_end(ok);
+    return;
+  }
+
+  if (parser.seen_test('A')) {                  // one go: tap the probe, G33, G29
+    pj_begin('A');
+    pj.abort = false; pj.g33_ok = pj.mesh_ok = false;
+    const uint8_t pts = parser.byteval('P', 3);
+    pj.stage = ProbeJob::AS_HOME;
+    gcode.process_subcommands_now(F("G28"));
+    do_blocking_move_to_xy(0, 0, 80);
+    do_blocking_move_to_z(current_position.z - 20, 20);
+    pj.stage = ProbeJob::AS_WAIT;
+    bool go = wait_probe_tap();
+    if (go) {
+      tap_lift();
+      TERN_(HAS_BUZZER, BUZZ(50, 2400));
+      pj.stage = ProbeJob::AS_COUNT;
+      for (uint8_t c = 3; c && !pj.abort; c--) {
+        pj.count = c;
+        const millis_t end = millis() + 1000;
+        while (PENDING(millis(), end) && !pj.abort) idle();
+      }
+      go = !pj.abort;
+    }
+    if (go) {
+      qqs_probe_hold = true;                    // the probe is on: no deploy / stow prompts until the end
+      endstops.enable_z_probe(true);
+      pj.stage = ProbeJob::AS_G33;
+      gcode.process_subcommands_now(F("G28"));
+      pj.g33_ok = do_g33(pts);
+      if (pj.g33_ok) {                          // G33 ends homed (at the top): G29 starts from there
+        pj.stage = ProbeJob::AS_G29;
+        pj.mesh_ok = do_g29();
+      }
+      qqs_probe_hold = false;
+      endstops.enable_z_probe(true);            // so stow() below really asks to take it off
+      pj.stage = ProbeJob::AS_STOW;
+      probe.stow();
+    }
+    gcode.process_subcommands_now(F("G28"));
+    pj.stage = ProbeJob::AS_DONE;
+    pj_end(go && pj.g33_ok && pj.mesh_ok);
     return;
   }
 }
