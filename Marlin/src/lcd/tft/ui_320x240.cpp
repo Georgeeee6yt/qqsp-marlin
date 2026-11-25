@@ -48,6 +48,9 @@
 #if ENABLED(QQS_UI)
   #include "qqs/qqs_ui.h"
   #include "qqs/qqs_ui_priv.h"
+  #ifdef MKS_WIFI
+    #include "../../module/mks_wifi/qqs_espflash.h"
+  #endif
 #endif
 
 void MarlinUI::tft_idle() {
@@ -63,6 +66,9 @@ void MarlinUI::tft_idle() {
 
   TERN_(QQS_UI, qqs::anim_idle());
   TERN_(QQS_UI, qqs::sensor_poll());
+  #if ENABLED(QQS_UI) && defined(MKS_WIFI)
+    espf_poll();                       // ESP8266 flasher state machine (does nothing when idle)
+  #endif
 
   tft.queue.async();
 

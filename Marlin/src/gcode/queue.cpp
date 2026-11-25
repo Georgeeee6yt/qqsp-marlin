@@ -25,6 +25,9 @@
  */
 
 #include "queue.h"
+#ifdef MKS_WIFI
+  #include "../module/mks_wifi/qqs_espflash.h"
+#endif
 GCodeQueue queue;
 
 #include "gcode.h"
@@ -429,6 +432,10 @@ void GCodeQueue::get_serial_commands() {
 
       // No data for this port ? Skip it
       if (!serial_data_available(p)) continue;
+
+      #ifdef MKS_WIFI
+        if (p == MKS_WIFI_SERIAL_NUM && espf_owns_uart()) continue;   // QQS-Pro: ESP flasher reads it
+      #endif
 
       // Ok, we have some data to process, let's make progress here
       hadData = true;

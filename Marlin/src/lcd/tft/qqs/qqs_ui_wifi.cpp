@@ -20,6 +20,8 @@
 #ifdef MKS_WIFI
   extern uint8_t mks_wifi_ip[4];
   extern uint8_t mks_wifi_net_state;
+  #include "../../../module/mks_wifi/qqs_espflash.h"
+  void espf_scan_sd(uint32_t sizes[5]);
 #endif
 #if HAS_BUZZER
   #include "../../../libs/buzzer.h"
@@ -34,6 +36,7 @@ namespace qqs {
   #ifdef MKS_WIFI
     static void go_scan();
     static void go_ap();
+    static void go_fwm();
   #endif
 
   // Network name for display: ASCII as is, one '?' per non-ASCII character, "…" when too wide.
@@ -119,15 +122,17 @@ namespace qqs {
 
     Btn a; a.icon = &qqs_i18_wifi; a.label = "掃描網路"; a.fg = C_ACCENT; a.border = C_ACCENT; a.enabled = wifi_ok();
     #ifdef MKS_WIFI
-      constexpr screenFunc_t scan_cb = go_scan, ap_cb = go_ap;
+      constexpr screenFunc_t scan_cb = go_scan, ap_cb = go_ap, fwm_cb = go_fwm;
     #else
-      constexpr screenFunc_t scan_cb = nullptr, ap_cb = nullptr;
+      constexpr screenFunc_t scan_cb = nullptr, ap_cb = nullptr, fwm_cb = nullptr;
     #endif
-    button(4, 180, 101, 56, a, scan_cb);
+    button(4, 180, 75, 56, a, scan_cb);
     Btn b; b.icon = &qqs_i18_printer; b.label = "熱點模式"; b.enabled = wifi_ok();
-    button(109, 180, 102, 56, b, ap_cb);
+    button(83, 180, 75, 56, b, ap_cb);
+    Btn f; f.icon = &qqs_i18_device_floppy; f.label = "模組韌體"; f.enabled = wifi_ok();
+    button(162, 180, 75, 56, f, fwm_cb);
     Btn c; c.icon = &qqs_i18_list; c.label = "詳細診斷";
-    button(215, 180, 101, 56, c, []{ ui.goto_screen(diag_screen); });
+    button(241, 180, 75, 56, c, []{ ui.goto_screen(diag_screen); });
   }
 
   void go_wifi() { ui.goto_screen(wifi_screen); }
@@ -605,6 +610,203 @@ namespace qqs {
     scan_from_ap = qqs_wnet.mode == 1;
     scan_start();
     ui.goto_screen(scan_screen);
+  }
+
+  // =========================================================================
+  // Module firmware: backup / restore / update the ESP8266 from the SD card (module/mks_wifi/qqs_espflash)
+  // =========================================================================
+
+  static uint32_t fw_sz[5];           // ESPSTUB.BIN, ESPBAK.BIN, MksWifi.bin, MksWifi_WebView.bin, MKS_WIFI_CUR
+  static int8_t fw_arm = -1;          // button waiting for its second press
+  static millis_t fw_arm_ms = 0;
+  static uint8_t fw_sig = 0xFF;
+  static void fwm_screen();
+  static void fwp_screen();
+
+  static char *fmt_bytes(char *o, uint32_t v) {     // "4,194,304 B"
+    char t[16]; uint8_t n = 0;
+    do { t[n++] = '0' + v % 10; v /= 10; } while (v);
+    uint8_t k = 0;
+    while (n) { o[k++] = t[--n]; if (n && n % 3 == 0) o[k++] = ','; }
+    strcpy(o + k, " B");
+    return o;
+  }
+
+  static void go_fwm() {
+    espf_scan_sd(fw_sz);
+    fw_arm = -1; fw_sig = 0xFF;
+    ui.goto_screen(fwm_screen);
+  }
+
+  static uint32_t fwp_sig = 0xFFFFFFFF;
+  template<uint8_t OP> static void fw_go() {
+    if (job_active() || espf_busy()) return;
+    if (fw_arm != OP || ELAPSED(millis(), fw_arm_ms + 3000)) { fw_arm = OP; fw_arm_ms = millis(); fw_sig = 0xFF; redraw(); return; }
+    fw_arm = -1;
+    espf_start(EspfOp(OP));
+    fwp_sig = 0xFFFFFFFF;
+    ui.goto_screen(fwp_screen);
+  }
+
+  static void fwm_screen() {
+    static millis_t next_ms = 0;
+    ui.defer_status_screen();
+    const bool draw = live(next_ms, 500);
+    if (fw_arm >= 0 && ELAPSED(millis(), fw_arm_ms + 3000)) fw_arm = -1;
+    const uint8_t sig = uint8_t(fw_arm + 1);
+    if (!draw || sig == fw_sig) return;
+    fw_sig = sig;
+
+    touch.clear();
+    header("模組韌體", go_wifi);
+    canvas(0, HEADER_H, TFT_WIDTH, 94, C_BG);
+    char v[40];
+    const bool nocard = fw_sz[0] == 0xFFFFFFFF, stub = !nocard && fw_sz[0];
+    int16_t y = 3;
+    auto row = [&](const char *label, const char *val, const uint16_t col) {
+      text(6, y, F_S, C_MUTED, C_BG, label); text(66, y, F_S, col, C_BG, val); y += 18;
+    };
+    if (nocard) row("SD 卡", "讀不到，請確認卡有插好", C_STOP);
+    else row("ESPSTUB", stub ? "有" : "沒有（四個功能都需要這個檔）", stub ? C_OK : C_STOP);
+    row("備份", fw_sz[1] ? fmt_bytes(v, fw_sz[1]) : "還沒有 ESPBAK.BIN", fw_sz[1] ? C_TEXT : C_DIM);
+    if (fw_sz[2]) { char b[20]; sprintf_P(v, PSTR("MksWifi.bin  %s"), fmt_bytes(b, fw_sz[2])); row("韌體", v, C_TEXT); }
+    else row("韌體", fw_sz[4] ? "沒有 MksWifi.bin（上次的已改名）" : "沒有 MksWifi.bin", C_DIM);
+    if (fw_sz[3]) { char b[20]; sprintf_P(v, PSTR("WebView  %s"), fmt_bytes(b, fw_sz[3])); row("網頁", v, C_TEXT); }
+    else row("網頁", "沒有 MksWifi_WebView.bin", C_DIM);
+    text(6, y + 1, F_S, C_WARN, C_BG, "每個按鈕都要 3 秒內按兩次。建議先備份。");
+
+    static const char * const lab[4] = { "備份模組", "寫回備份", "更新韌體", "更新網頁" };
+    static const qqs_bitmap_t * const ic[4] = { &qqs_i18_device_floppy, &qqs_i18_restore, &qqs_i18_refresh, &qqs_i18_refresh };
+    static const screenFunc_t cb[4] = { fw_go<0>, fw_go<1>, fw_go<2>, fw_go<3> };
+    const bool can = stub && !job_active();
+    const bool en[4] = { can, can && fw_sz[1], can && fw_sz[2], can && fw_sz[3] };
+    for (uint8_t i = 0; i < 4; i++) {
+      Btn b; b.icon = ic[i]; b.enabled = en[i];
+      if (fw_arm == i) { b.label = "再按一次確認"; b.fg = C_STOP; b.border = C_STOP; b.bg = C_STOPBG; }
+      else b.label = lab[i];
+      button(4 + (i & 1) * 158, 128 + (i >> 1) * 56, 154, 52, b, cb[i]);
+    }
+  }
+
+  // ---- progress ----
+  static void fw_retry() { if (!job_active()) { espf_start(EspfOp(espf.op)); fwp_sig = 0xFFFFFFFF; redraw(); } }
+
+  static const char *fw_err_text(char *o) {
+    switch (espf.err) {
+      case EE_SD:      return "SD 卡讀不到";
+      case EE_NOSTUB:  return "沒有 ESPSTUB.BIN，或檔案不對";
+      case EE_NOFILE:  return "SD 卡上找不到要寫的檔案";
+      case EE_SIZE:    return "檔案大小不對（太大或是空的）";
+      case EE_NOTIMG:  return "MksWifi.bin 不是 ESP8266 韌體";
+      case EE_FULL:    return "備份檔已有 10 個，請刪舊的";
+      case EE_SYNC:    return "模組沒進燒錄模式（沒有回應）";
+      case EE_OHAI:    return "stub 沒有啟動";
+      case EE_BAUD:    return "三種速度都連不上";
+      case EE_FLASHID: return "讀不到快閃型號";
+      case EE_CMD:     sprintf_P(o, PSTR("模組回報錯誤（碼 %04X）"), espf.err_code); return o;
+      case EE_TIMEOUT: return "等太久沒有回應";
+      case EE_DATA:    return "收到的資料不完整";
+      case EE_MD5:     return "MD5 驗證不符";
+      case EE_SDWRITE: return "SD 卡讀寫失敗";
+      case EE_RENAME:  return "已寫入並驗證，但檔案改名失敗";
+      default:         return "";
+    }
+  }
+
+  static void fwp_screen() {
+    static millis_t next_ms = 0;
+    ui.defer_status_screen();
+    const bool draw = live(next_ms, 250);
+    const uint32_t secs = (millis() - espf.stage_ms) / 1000;
+    const uint8_t pct = espf.total ? uint8_t(uint64_t(espf.done) * 100 / espf.total) : 0;
+    const uint32_t sig = (uint32_t(espf.running) << 31) | (uint32_t(espf.err) << 24) | (uint32_t(espf.stage) << 20)
+                       | (uint32_t(pct) << 12) | _MIN(secs, 4095UL);
+    if (!draw || sig == fwp_sig) return;
+    fwp_sig = sig;
+
+    static const char * const title[4] = { "備份模組", "寫回備份", "更新韌體", "更新網頁" };
+    touch.clear();
+    header(title[espf.op], espf.running ? nullptr : go_fwm);
+    if (espf.running) {                    // no way out while the module is in its bootloader
+      canvas(0, 0, 84, HEADER_H - 1, C_BAR);
+    }
+
+    // stage list (left)
+    canvas(0, HEADER_H, 128, 144, C_BG);
+    static const char * const st_name[EST_COUNT] = { "進燒錄模式", "載入 stub", "抹除", "寫入", "驗證", "重開" };
+    int16_t y = 6;
+    for (uint8_t i = 0; i < EST_COUNT; i++) {
+      if (i == EST_ERASE && espf.op == ESPF_BACKUP) continue;
+      const bool failed = espf.err && i == espf.stage, cur = !espf.err && espf.running && i == espf.stage,
+                 done = i < espf.stage || (!espf.running && !espf.err);
+      const uint16_t col = failed ? C_STOP : cur ? C_ACCENT : done ? C_OK : C_DIM;
+      fill(10, y + 4, 8, 8, col);
+      text(26, y, F_S, failed || cur ? col : done ? C_TEXT : C_DIM, C_BG,
+           (i == EST_XFER && espf.op == ESPF_BACKUP) ? "讀取" : st_name[i]);
+      y += 22;
+    }
+
+    // details (right)
+    canvas(128, HEADER_H, TFT_WIDTH - 128, 144, C_BG);
+    constexpr int16_t W = TFT_WIDTH - 128 - 6;
+    char v[64];
+    if (espf.err) {
+      text(0, 6, F_L, C_STOP, C_BG, "失敗");
+      sprintf_P(v, PSTR("停在「%s」"), (espf.stage == EST_XFER && espf.op == ESPF_BACKUP) ? "讀取" : st_name[espf.stage]);
+      text(0, 42, F_S, C_TEXT, C_BG, v);
+      text(0, 62, F_S, C_WARN, C_BG, fw_err_text(v));
+      text(0, 90, F_S, C_MUTED, C_BG, espf.err == EE_RENAME ? "模組已更新好，只差改檔名。"
+           : (espf.stage <= EST_STUB || espf.op == ESPF_BACKUP) ? "模組沒有被改動。" : "模組韌體可能不完整，請重試。");
+    }
+    else if (!espf.running) {
+      text(0, 6, F_L, C_OK, C_BG, "完成");
+      if (espf.op == ESPF_BACKUP) { sprintf_P(v, PSTR("已存成 %s"), espf.file); text(0, 42, F_S, C_TEXT, C_BG, v); }
+      else text(0, 42, F_S, C_TEXT, C_BG, "已寫入，MD5 驗證相符");
+      if (espf.reported) {
+        if (mks_wifi_net_state == 1) sprintf_P(v, PSTR("模組已開機 %u.%u.%u.%u"), mks_wifi_ip[0], mks_wifi_ip[1], mks_wifi_ip[2], mks_wifi_ip[3]);
+        else strcpy_P(v, PSTR("模組已開機（還沒連上網路）"));
+        text(0, 62, F_S, C_OK, C_BG, v);
+      }
+      else text(0, 62, F_S, C_WARN, C_BG, "40 秒內沒收到模組回報");
+    }
+    else if (espf.stage == EST_XFER && espf.total) {
+      sprintf_P(v, PSTR("%u%%"), pct);
+      text(0, 2, F_L, C_TEXT, C_BG, v);
+      fill(0, 36, W, 8, C_TILE);
+      fill(0, 36, int16_t(uint32_t(W) * pct / 100), 8, C_ACCENT);
+      sprintf_P(v, PSTR("%lu／%lu KB"), (unsigned long)(espf.done >> 10), (unsigned long)(espf.total >> 10));
+      text(0, 52, F_S, C_TEXT, C_BG, v);
+      if (espf.bps) { sprintf_P(v, PSTR("%lu KB/s"), (unsigned long)(espf.bps >> 10)); text(0, 70, F_S, C_MUTED, C_BG, v); }
+    }
+    else {
+      static const char * const doing[EST_COUNT] = { "重開模組進燒錄模式…", "載入 stub、讀快閃型號…", "抹除中…", "", "請模組算 MD5…", "等模組開機回報…" };
+      text(0, 10, F_S, C_TEXT, C_BG, espf.op == ESPF_BACKUP && espf.stage == EST_VERIFY ? "讀回 SD 檔案比對…" : doing[espf.stage]);
+      sprintf_P(v, PSTR("%lu 秒"), (unsigned long)secs);
+      text(0, 30, F_S, C_MUTED, C_BG, v);
+    }
+
+    // link (bottom of the right panel)
+    if (espf.flash_size) {
+      sprintf_P(v, PSTR("%lu bps"), (unsigned long)espf.baud);
+      text(0, 112, F_S, C_DIM, C_BG, v);
+      sprintf_P(v, PSTR("快閃 %lu MB（%06lX）"), (unsigned long)(espf.flash_size >> 20), (unsigned long)espf.flash_id);
+      text(0, 128, F_S, C_DIM, C_BG, v);
+    }
+    else if (espf.running) text(0, 128, F_S, C_DIM, C_BG, "過程中請不要關機");
+
+    if (!espf.running) {
+      if (espf.err) {
+        Btn r; r.icon = &qqs_i18_refresh; r.label = "重試"; r.fg = C_ACCENT; r.border = C_ACCENT; r.enabled = !job_active();
+        button(4, 184, 154, 52, r, fw_retry);
+        Btn k; k.icon = &qqs_i18_chevron_left; k.label = "返回";
+        button(162, 184, 154, 52, k, go_fwm);
+      }
+      else {
+        Btn k; k.icon = &qqs_i18_check; k.label = "完成"; k.fg = C_ACCENT; k.border = C_ACCENT;
+        button(83, 184, 154, 52, k, go_fwm);
+      }
+    }
+    else canvas(0, 184, TFT_WIDTH, 52, C_BG);
   }
 
 #endif // MKS_WIFI

@@ -6,6 +6,7 @@
 #include "../../lcd/marlinui.h"
 #include "mks_wifi_sd.h"
 #include "../../lcd/tft/qqs/qqs_wifi_diag.h"
+#include "qqs_espflash.h"
 
 qqs_wifi_diag_t qqs_wdiag;
 qqs_wifi_net_t qqs_wnet;
@@ -170,6 +171,8 @@ void mks_wifi_out_add(uint8_t *data, uint32_t size){
 	static uint32_t line_index=0;
 	uint32_t packet_size;
 	ESP_PROTOC_FRAME esp_frame;
+
+	if (espf_owns_uart()) return;     // QQS-Pro: the ESP is in its bootloader, Marlin's output would break the link
 
 	while (size--){
 		if(*data == 0x0a){
