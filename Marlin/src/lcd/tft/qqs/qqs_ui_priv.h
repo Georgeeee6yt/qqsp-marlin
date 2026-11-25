@@ -55,6 +55,7 @@ namespace qqs {
     void full();                          // the whole 160 x 120 picture, in its own canvas
     bool step();                          // only the slots that changed (each its own canvas); false: nothing to do
   };
+  void wifi_status(void (*out)(const char *));   // M2012 reply lines for the Wi-Fi module (qqs_ui.cpp)
   // From tft_idle: animation frames and the once-a-second values on the probe job / PID screens
   void probe_anim_idle();
   void pid_anim_idle();

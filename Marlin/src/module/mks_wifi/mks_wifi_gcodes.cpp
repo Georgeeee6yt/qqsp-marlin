@@ -59,6 +59,12 @@ void mks_m997(void){
 }
 
 
+#if ENABLED(QQS_UI)
+  #include "../../lcd/tft/qqs/qqs_ui_priv.h"
+  static void m2012_out(const char *s) { mks_wifi_out_add((uint8_t *)s, strlen(s)); }
+  void mks_m2012(void) { qqs::wifi_status(m2012_out); }   // QQS-Pro: status for the module's web page
+#endif
+
 void mks_m115(void){
   mks_wifi_out_add((uint8_t *)m115_firmware,strlen(m115_firmware));
 }

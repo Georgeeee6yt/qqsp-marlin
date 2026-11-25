@@ -1132,6 +1132,9 @@ void GcodeSuite::process_parsed_command(const bool no_ok/*=false*/) {
 				case 991: if(port.index == MKS_WIFI_SERIAL_NUM){mks_m991();}; break;
 				case 992: if(port.index == MKS_WIFI_SERIAL_NUM){mks_m992();}; break;
 				case 994: if(port.index == MKS_WIFI_SERIAL_NUM){mks_m994();}; break;
+				#if ENABLED(QQS_UI)
+				  case 2012: if (port.index == MKS_WIFI_SERIAL_NUM) mks_m2012(); break;   // QQS-Pro: web page status
+				#endif
       #endif
       
       #if ENABLED(MKS_WIFI)

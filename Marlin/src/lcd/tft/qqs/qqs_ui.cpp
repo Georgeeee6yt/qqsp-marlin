@@ -963,6 +963,45 @@ namespace qqs {
     }
   }
 
+  // M2012, asked by the Wi-Fi module (QQS1.1+) for its web page: what the printing screen shows, in two short
+  // lines (the module reads reply lines into 100-byte buffers):
+  //   QQS s=<0 idle 1 printing 2 heating 3 paused 4 stopping> p=<%> e=<s> r=<s, -1 unknown> t=<0.1°>/<°> b=<0.1°>/<°>
+  //       f=<fan %> v=<speed %> w=<flow %> z=<Z babystep, 0.01 mm> a=<1 animation off>
+  //   QQSN <file name>   (only while a job runs; cut to 86 bytes on a UTF-8 boundary)
+  void wifi_status(void (*out)(const char *)) {
+    char b[100];
+    const bool active = printingIsActive(), paused = printingIsPaused();
+    const uint8_t st = stopping && (active || paused) ? 4 : paused ? 3 : active ? (wait_for_heatup ? 2 : 1) : 0;
+    long rem = -1;
+    #if ENABLED(SHOW_REMAINING_TIME)
+      if (st) { const uint32_t r = ui.get_remaining_time(); if (r) rem = long(r); }
+    #endif
+    snprintf_P(b, sizeof(b), PSTR("QQS s=%u p=%u e=%lu r=%ld t=%d/%d b=%d/%d f=%d v=%d w=%d z=%d a=%u\n"),
+      st, st ? ui.get_progress_percent() : 0, st ? (unsigned long)print_job_timer.duration() : 0UL, rem,
+      int(thermalManager.degHotend(0) * 10), int(thermalManager.degTargetHotend(0)),
+      #if HAS_HEATED_BED
+        int(thermalManager.degBed() * 10), int(thermalManager.degTargetBed()),
+      #else
+        0, 0,
+      #endif
+      get_fan(), feedrate_percentage, planner.flow_percentage[0], int(lroundf(bs_total * 100)), qqs_settings.anim_off ? 1 : 0);
+    out(b);
+    // The name is taken once, on the first poll of a job: card.longFilename / filename are CardReader's scratch
+    // buffers and any later directory listing (M20 from a slicer, ...) overwrites them. The module polls every
+    // 2-5 s whether or not a page is open, so the first poll comes right after the job starts.
+    static char jn[87] = "";
+    static uint8_t prev = 0;
+    if (st && !prev) {
+      const char *n = card.longFilename[0] ? card.longFilename : card.filename;
+      size_t len = strlen(n);
+      if (len > 86) { len = 86; while (len && (uint8_t(n[len]) & 0xC0) == 0x80) len--; }   // not inside a UTF-8 character
+      for (size_t i = 0; i < len; i++) { const char c = n[i]; jn[i] = (c == '\r' || c == '\n') ? ' ' : c; }
+      jn[len] = '\0';
+    }
+    prev = st;
+    if (st) { snprintf_P(b, sizeof(b), PSTR("QQSN %s\n"), jn); out(b); }
+  }
+
   // =========================================================================
   // Printing screen
   // =========================================================================
