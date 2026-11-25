@@ -260,8 +260,7 @@ void draw_fan_status(uint16_t x, uint16_t y, const bool blink) {
 void MarlinUI::draw_status_screen() {
   #if ENABLED(QQS_UI)
     qqs::status_screen();
-    return;
-  #endif
+  #else   // QQS-Pro: Marlin's own status screen (and its 64x64 icons) is not built
   const bool blink = get_blink();
 
   TERN_(TOUCH_SCREEN, touch.clear());
@@ -393,6 +392,7 @@ void MarlinUI::draw_status_screen() {
       add_control(0, 130, sd_icon_screen, imgSD, !pa, COLOR_CONTROL_ENABLED, pa ? COLOR_BUSY : COLOR_CONTROL_DISABLED);
     #endif
   #endif
+  #endif // !QQS_UI
 }
 
 // Low-level draw_edit_screen can be used to draw an edit screen from anyplace

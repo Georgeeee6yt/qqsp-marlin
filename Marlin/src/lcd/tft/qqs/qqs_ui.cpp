@@ -860,7 +860,6 @@ namespace qqs {
   static void go_touch_cal() { ui.goto_screen(touch_screen_calibration); }
   void go_info()             { ui.goto_screen(info_screen); }
   static void go_reset()     { ui.goto_screen(reset_screen); }
-  static void go_marlin()    { ui.goto_screen(menu_main); }
 
   static void settings_screen() {
     static millis_t next_ms = 0;
@@ -883,9 +882,10 @@ namespace qqs {
       { &qqs_i18_hand_finger,     "觸控校準", nullptr,  go_touch_cal },
       { &qqs_i18_info_circle,     "機器資訊", nullptr,  go_info },
       { &qqs_i18_restore,         "恢復預設", nullptr,  go_reset },
-      { &qqs_i18_list,            "進階選單", "Marlin", go_marlin },
+      { nullptr,                  nullptr,    nullptr,  nullptr },   // free (was Marlin's menu): v3.3 machine auto tune
     };
     for (uint8_t i = 0; i < 12; i++) {
+      if (!tiles[i].label) continue;
       Btn b; b.icon = tiles[i].icon; b.label = tiles[i].label; b.sub = tiles[i].sub;
       b.enabled = tiles[i].cb != nullptr;
       button(4 + (i % 4) * 79, 36 + (i / 4) * 68, 75, 64, b, tiles[i].cb);

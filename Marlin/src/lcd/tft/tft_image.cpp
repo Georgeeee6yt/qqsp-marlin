@@ -78,24 +78,25 @@ const tImage Slider8x16x4           = { (void *)slider_8x16x4, 8, 16, GREYSCALE4
 const tImage LampOff_64x64x4           = { (void *)lamp_off_64x64x4, 64, 64, GREYSCALE4 };
 const tImage LampOn_64x64x4           = { (void *)lamp_on_64x64x4, 64, 64, GREYSCALE4 };
 
+// QQS-Pro: the icons of Marlin's own status / move screens are not built (those screens are not used)
 const tImage Images[imgCount] = {
   TERN(QQS_UI, NoLogo, TERN(SHOW_BOOTSCREEN, TERN(BOOT_MARLIN_LOGO_SMALL, MarlinLogo195x59x16, MARLIN_LOGO_FULL_SIZE), NoLogo)),  // QQS-Pro draws its own
-  HotEnd_64x64x4,
-  Bed_64x64x4,
-  Bed_Heated_64x64x4,
-  Chamber_64x64x4,
-  Chamber_Heated_64x64x4,
-  Fan0_64x64x4,
-  Fan_Slow0_64x64x4,
-  Fan_Slow1_64x64x4,
-  Fan_Fast0_64x64x4,
-  Fan_Fast1_64x64x4,
-  Feedrate_32x32x4,
-  Flowrate_32x32x4,
-  SD_64x64x4,
-  Menu_64x64x4,
-  Settings_64x64x4,
-  Directory_32x32x4,
+  TERN(QQS_UI, NoLogo, HotEnd_64x64x4),
+  TERN(QQS_UI, NoLogo, Bed_64x64x4),
+  TERN(QQS_UI, NoLogo, Bed_Heated_64x64x4),
+  TERN(QQS_UI, NoLogo, Chamber_64x64x4),
+  TERN(QQS_UI, NoLogo, Chamber_Heated_64x64x4),
+  TERN(QQS_UI, NoLogo, Fan0_64x64x4),
+  TERN(QQS_UI, NoLogo, Fan_Slow0_64x64x4),
+  TERN(QQS_UI, NoLogo, Fan_Slow1_64x64x4),
+  TERN(QQS_UI, NoLogo, Fan_Fast0_64x64x4),
+  TERN(QQS_UI, NoLogo, Fan_Fast1_64x64x4),
+  TERN(QQS_UI, NoLogo, Feedrate_32x32x4),
+  TERN(QQS_UI, NoLogo, Flowrate_32x32x4),
+  TERN(QQS_UI, NoLogo, SD_64x64x4),
+  TERN(QQS_UI, NoLogo, Menu_64x64x4),
+  TERN(QQS_UI, NoLogo, Settings_64x64x4),
+  TERN(QQS_UI, NoLogo, Directory_32x32x4),
   Confirm_64x64x4,
   Cancel_64x64x4,
   Increase_64x64x4,
@@ -103,16 +104,16 @@ const tImage Images[imgCount] = {
   Back_32x32x4,
   Up_32x32x4,
   Down_32x32x4,
-  Left_32x32x4,
-  Right_32x32x4,
+  TERN(QQS_UI, NoLogo, Left_32x32x4),
+  TERN(QQS_UI, NoLogo, Right_32x32x4),
   Refresh_32x32x4,
-  Leveling_32x32x4,
+  TERN(QQS_UI, NoLogo, Leveling_32x32x4),
   Slider8x16x4,
-  Home_64x64x4,
+  TERN(QQS_UI, NoLogo, Home_64x64x4),
   BtnRounded_64x52x4,
   BtnRounded_42x39x4,
-  LampOff_64x64x4,
-  LampOn_64x64x4
+  TERN(QQS_UI, NoLogo, LampOff_64x64x4),
+  TERN(QQS_UI, NoLogo, LampOn_64x64x4)
 };
 
 #endif // HAS_GRAPHICAL_TFT

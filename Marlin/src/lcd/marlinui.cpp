@@ -663,7 +663,7 @@ void MarlinUI::init() {
 
     if (did_expire) reset_status();
 
-    #if HAS_MARLINUI_MENU
+    #if HAS_MARLINUI_MENU && DISABLED(QQS_UI)   // QQS-Pro: the status screen has its own buttons, no Marlin main menu
       if (use_click()) {
         #if BOTH(FILAMENT_LCD_DISPLAY, SDSUPPORT)
           pause_filament_display();
