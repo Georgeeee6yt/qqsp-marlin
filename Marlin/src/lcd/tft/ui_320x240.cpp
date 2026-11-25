@@ -66,6 +66,8 @@ void MarlinUI::tft_idle() {
   #endif
 
   TERN_(QQS_UI, qqs::anim_idle());
+  TERN_(QQS_UI, qqs::probe_anim_idle());
+  TERN_(QQS_UI, qqs::pid_anim_idle());
   TERN_(QQS_UI, qqs::sensor_poll());
   TERN_(QQS_UI, qqs::sys_poll());
   TERN_(QQS_PERF, qqs_perf::poll());

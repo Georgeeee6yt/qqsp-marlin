@@ -662,12 +662,46 @@ namespace qqs {
 
   static uint8_t pid_state = 0;     // 0 idle, 1 hotend running, 2 bed running, 3 done
   static millis_t pid_ms = 0;
+  static bool pid_bed_last = false; // which one was tuned last (for the "done" highlight)
+
+  // Temperature curve: one sample a second while tuning
+  #define PID_HIST 148
+  static int16_t pid_hist[PID_HIST];   // 0.1 °C
+  static uint8_t pid_hn = 0;           // samples so far (ring buffer once full)
+  static uint16_t pid_hpos = 0;
+
+  static Anim2 pidan;                  // the stirring girl
+  static uint8_t pid_tick = 0;
+  constexpr int16_t PA_Y = HEADER_H + 4, PL_Y = PA_Y + 122;
+
+  static bool pid_busy() { return pid_state == 1 || pid_state == 2; }
+  static bool pid_is_bed() { return pid_busy() ? pid_state == 2 : pid_bed_last; }
+  static int16_t pid_target() { return pid_is_bed() ? 60 : 220; }
+  static float pid_temp() { return pid_is_bed() ? thermalManager.degBed() : thermalManager.degHotend(0); }
+  // Heater output 0..100 % (soft PWM 0..127 during M303)
+  static uint8_t pid_power() {
+    #if HAS_HEATED_BED
+      if (pid_is_bed()) return uint8_t(_MIN(int16_t(thermalManager.getHeaterPower(H_BED)) * 100 / 127, 100));
+    #endif
+    return uint8_t(_MIN(int16_t(thermalManager.getHeaterPower(H_E0)) * 100 / 127, 100));
+  }
+  // M303 puts "... <k>/<ncycles>" on the status line each time a cool-down ends: k = 0 after the first
+  // heat-up (not counted), then 1, 2, ... ; "8/8" ends it. So the cycle running now is k + 1.
+  static uint8_t pid_cycle() {
+    const char *m = ui.status_message, *sl = strchr(m, '/');
+    if (!sl) return 1;
+    const char *d = sl;
+    while (d > m && NUMERIC(d[-1])) d--;
+    if (d == sl) return 1;
+    return _MIN(atoi(d) + 1, 8);
+  }
 
   static void pid_start(const bool bed) {
-    if (job_active() || pid_state == 1 || pid_state == 2) return;
+    if (job_active() || pid_busy()) return;
     if (!run(bed ? "M303 E-1 S60 C8 U1" : "M303 E0 S220 C8 U1")) return;
-    pid_state = bed ? 2 : 1;
+    pid_state = bed ? 2 : 1; pid_bed_last = bed;
     pid_ms = millis();
+    pid_hn = 0; pid_hpos = 0;
     ui.set_status(bed ? "熱床 PID 調校中（約 5–10 分鐘）" : "噴頭 PID 調校中（約 3–5 分鐘）");
     redraw();
   }
@@ -675,49 +709,80 @@ namespace qqs {
   static void pid_bed() { pid_start(true); }
   static void pid_stop() { wait_for_heatup = false; ui.set_status("已停止調校"); redraw(); }
 
+  // Right of the picture. Tuning: temperature, heater output, cycle, curve. Otherwise: the PID values.
+  static void pid_panel() {
+    constexpr int16_t PX = 160, PW = 160, PH = 120;
+    canvas(PX, PA_Y, PW, PH, C_BG);
+    char v[40], a[16], b[16], c[16];
+    if (pid_busy()) {
+      sprintf_P(v, PSTR("%s　目標 %d°"), pid_is_bed() ? "熱床" : "噴頭", pid_target());   // drawn with F_S
+      text(6, 0, F_S, C_MUTED, C_BG, v);
+      sprintf_P(v, PSTR("%d°"), int(lroundf(pid_temp())));
+      text(4, 16, F_XL, C_TEXT, C_BG, v);
+      const uint8_t pw = pid_power();
+      sprintf_P(v, PSTR("%u%%"), pw);   // drawn with F_M
+      text_r(PW - 6, 20, F_M, pw ? C_HOT : C_MUTED, C_BG, v);
+      sprintf_P(v, PSTR("第 %u/8 輪"), pid_cycle());   // drawn with F_S
+      text_r(PW - 6, 44, F_S, C_MUTED, C_BG, v);
+      // curve: last PID_HIST seconds, the target as a dotted line
+      constexpr int16_t GX = 6, GY = 68, GW = PID_HIST, GH = 48;
+      fill(GX, GY + GH, GW, 1, C_BORDER);
+      if (!pid_hn) return;
+      const int16_t tgt = pid_target() * 10;
+      int16_t lo = tgt, hi = tgt;
+      const uint8_t n = pid_hn;
+      const uint16_t first = (pid_hpos + PID_HIST - n) % PID_HIST;
+      for (uint8_t k = 0; k < n; k++) { const int16_t t = pid_hist[(first + k) % PID_HIST]; NOMORE(lo, t); NOLESS(hi, t); }
+      if (hi - lo < 100) { const int16_t m = (hi + lo) / 2; lo = m - 50; hi = m + 50; }
+      auto ypix = [&](const int16_t t) -> int16_t { return GY + GH - 1 - int32_t(t - lo) * (GH - 1) / (hi - lo); };
+      const int16_t ty = ypix(tgt);
+      for (int16_t x = 0; x < GW; x += 4) fill(GX + x, ty, 2, 1, C_DIM);
+      int16_t py = ypix(pid_hist[first]);
+      for (uint8_t k = 0; k < n; k++) {
+        const int16_t y = ypix(pid_hist[(first + k) % PID_HIST]), y0 = _MIN(y, py), y1 = _MAX(y, py);
+        fill(GX + (GW - n) + k, y0, 1, y1 - y0 + 1, C_ACCENT);   // newest at the right edge
+        py = y;
+      }
+      return;
+    }
+    #if ENABLED(PIDTEMP)
+      const auto &hp = thermalManager.temp_hotend[0].pid;
+      text(6, 0, F_M, pid_state == 3 && !pid_bed_last ? C_OK : C_TEXT, C_BG, "噴頭");
+      sprintf_P(v, PSTR("P %s  I %s"), f2(a, hp.p()), f2(b, hp.i())); text(6, 22, F_S, C_MUTED, C_BG, v);
+      sprintf_P(v, PSTR("D %s"), f2(c, hp.d()));                      text(6, 38, F_S, C_MUTED, C_BG, v);
+    #endif
+    #if ENABLED(PIDTEMPBED)
+      const auto &bp = thermalManager.temp_bed.pid;
+      text(6, 60, F_M, pid_state == 3 && pid_bed_last ? C_OK : C_TEXT, C_BG, "熱床");
+      sprintf_P(v, PSTR("P %s  I %s"), f2(a, bp.p()), f2(b, bp.i())); text(6, 82, F_S, C_MUTED, C_BG, v);
+      sprintf_P(v, PSTR("D %s"), f2(c, bp.d()));                      text(6, 98, F_S, C_MUTED, C_BG, v);
+    #endif
+  }
+
   static void pid_screen() {
     static millis_t next_ms = 0;
     ui.defer_status_screen();
     save_feedback_poll();
-    if ((pid_state == 1 || pid_state == 2) && ELAPSED(millis(), pid_ms + 2000) && queue_idle()) {
+    if (pid_busy() && ELAPSED(millis(), pid_ms + 2000) && queue_idle()) {
       pid_state = 3;
       #if HAS_BUZZER
         BUZZ(200, 2000);
       #endif
       redraw();
     }
-    if (!live(next_ms, 1000)) return;
+    if (!live(next_ms, 30000)) return;   // the panel and the picture refresh themselves (pid_anim_idle)
 
     touch.clear();
-    header_save("PID 調整", go_settings, !(pid_state == 1 || pid_state == 2));
-    canvas(0, HEADER_H, TFT_WIDTH, 140, C_BG);
-    char v[64], a[16], b[16], c[16];
-    #if ENABLED(PIDTEMP)
-      const auto &hp = thermalManager.temp_hotend[0].pid;
-      text(10, 6, F_M, C_TEXT, C_BG, "噴頭");
-      sprintf_P(v, PSTR("P %s  I %s  D %s"), f2(a, hp.p()), f2(b, hp.i()), f2(c, hp.d()));
-      text(60, 8, F_S, C_MUTED, C_BG, v);
-    #endif
-    #if ENABLED(PIDTEMPBED)
-      const auto &bp = thermalManager.temp_bed.pid;
-      text(10, 34, F_M, C_TEXT, C_BG, "熱床");
-      sprintf_P(v, PSTR("P %s  I %s  D %s"), f2(a, bp.p()), f2(b, bp.i()), f2(c, bp.d()));
-      text(60, 36, F_S, C_MUTED, C_BG, v);
-    #endif
-    const bool busy = pid_state == 1 || pid_state == 2;
-    if (busy) {
-      sprintf_P(v, PSTR("調校中…　噴頭 %d°　熱床 %d°"), thermalManager.wholeDegHotend(0), thermalManager.wholeDegBed());
-      text(10, 70, F_M, C_WARN, C_BG, v);
-      text(10, 96, F_S, C_MUTED, C_BG, "加熱、冷卻來回 8 次，算好會自動套用。");
-    }
-    else if (pid_state == 3) {
-      text(10, 70, F_M, C_OK, C_BG, "調校完成，新值已套用");
-      text(10, 96, F_S, C_MUTED, C_BG, "要保留請按右上角「存檔」。");
-    }
-    else {
-      text(10, 70, F_S, C_MUTED, C_BG, "噴頭用 220°、熱床用 60° 調校，跟平常列印的溫度接近。");
-      text(10, 88, F_S, C_MUTED, C_BG, "調校時別碰噴頭和熱床；完成後按右上角「存檔」。");
-    }
+    const bool busy = pid_busy();
+    header_save("PID 調整", go_settings, !busy);
+    canvas(0, HEADER_H, TFT_WIDTH, 176 - HEADER_H, C_BG);
+    if (pidan.a != &qqs_anim2_pid) pidan.begin(qqs_anim2_pid, 0, PA_Y);
+    pidan.full();
+    pid_panel();
+    canvas(0, PL_Y, TFT_WIDTH, 176 - PL_Y, C_BG);
+    if (busy)                text_c(0, 0, TFT_WIDTH, F_S, C_MUTED, C_BG, "加熱、冷卻來回 8 次，算好會自動套用。");
+    else if (pid_state == 3) text_c(0, 0, TFT_WIDTH, F_S, C_OK, C_BG, "完成，新值已套用。要保留請按「存檔」。");
+    else                     text_c(0, 0, TFT_WIDTH, F_S, C_MUTED, C_BG, "調校時別碰噴頭和熱床，完成後按「存檔」。");
 
     if (busy) {
       Btn s; s.icon = &qqs_i28_player_stop; s.label = "停止調校"; s.fg = C_STOP; s.border = C_STOP;
@@ -729,7 +794,43 @@ namespace qqs {
     }
   }
 
-  void go_pid() { if (pid_state == 3) pid_state = 0; ui.goto_screen(pid_screen); }
+  // From tft_idle: picture every 125 ms; while tuning, a temperature sample + the panel once a second
+  void pid_anim_idle() {
+    static millis_t next_ms = 0, sec_ms = 0;
+    if (ui.currentScreen != pid_screen || !pidan.a || !tft.queue.is_empty()) return;
+    const millis_t now = millis();
+    const bool busy = pid_busy();
+    if (busy && ELAPSED(now, sec_ms)) {
+      sec_ms = now + 1000;
+      pid_hist[pid_hpos] = int16_t(lroundf(pid_temp() * 10.0f));
+      pid_hpos = (pid_hpos + 1) % PID_HIST;
+      if (pid_hn < PID_HIST) pid_hn++;
+      pid_panel();
+      return;                                // one batch per call
+    }
+    if (PENDING(now, next_ms) || qqs_settings.anim_off) return;
+    next_ms = now + 125;
+    pid_tick++;
+    static const uint8_t stir[] = { 2, 3, 4, 3, 2, 1, 0, 1 }, sway[] = { 1, 2, 1, 0 };
+    if (busy) {
+      pidan.set(QQS_A2_PID_HAND, stir[pid_tick & 7]);
+      // flame = what the heater is doing now; flickers and flips while it burns
+      const uint8_t pw = pid_power(), fl = pid_tick & 1;
+      pidan.set(QQS_A2_PID_FLAME, pw < 3 ? 0 : pw < 35 ? 1 : pw < 70 ? (fl ? 4 : 2) : ((pid_tick % 5) == 0 ? 2 : fl ? 5 : 3));
+      // steam once it is (nearly) at temperature
+      const bool hot = pid_temp() >= pid_target() - (pid_is_bed() ? 2 : 5);
+      pidan.set(QQS_A2_PID_STEAM, hot ? 1 + ((pid_tick / 2) & 3) : 0);
+    }
+    else {
+      pidan.set(QQS_A2_PID_HAND, 2); pidan.set(QQS_A2_PID_FLAME, 0); pidan.set(QQS_A2_PID_STEAM, 0);
+    }
+    pidan.set(QQS_A2_PID_STAR1, sway[(pid_tick / 4) & 3]);
+    pidan.set(QQS_A2_PID_STAR2, sway[((pid_tick / 4) + 2) & 3]);
+    pidan.set(QQS_A2_PID_AHOGE, sway[(pid_tick / 3) & 3]);
+    pidan.step();
+  }
+
+  void go_pid() { if (pid_state == 3) pid_state = 0; ui.goto_screen(pid_screen); }   // the curve stays until the next run
 
   // =========================================================================
   // Machine parameters

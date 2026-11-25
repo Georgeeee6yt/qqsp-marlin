@@ -79,7 +79,26 @@ namespace qqs {
     char sd[12];                  // 'C': "0.012" from G33's status line, "" if it did not finish
   };
   extern ProbeJob pj;
+
+  // ---- G29 progress for the mesh picture (filled by G29 through the qqs_g29_* hooks) ----
+  struct MeshProgress {
+    float lfx, lfy, spx, spy;     // grid start and spacing (mm)
+    uint8_t nx, ny;               // grid size; 0 = no G29 has started yet
+    uint8_t total, n_done;        // points the probe can reach / measured so far
+    int8_t ix, iy;                // point being probed, -1 = none
+    uint8_t done[11];             // 1 bit per grid point (index iy * nx + ix), up to 88 points
+    millis_t t_first, t_last;     // first and latest point measured
+    bool reachable(const uint8_t i, const uint8_t j) const;
+    bool is_done(const uint8_t i, const uint8_t j) const { const uint8_t k = j * nx + i; return TEST(done[k >> 3], k & 7); }
+  };
+  extern MeshProgress mp;
 }
+
+// Hooks (gcode/bedlevel/abl/G29.cpp, module/probe.cpp)
+void qqs_g29_begin(const float lfx, const float lfy, const float spx, const float spy, const uint8_t nx, const uint8_t ny);
+void qqs_g29_at(const uint8_t ix, const uint8_t iy);
+void qqs_g29_done(const uint8_t ix, const uint8_t iy);
+extern volatile uint16_t qqs_probe_n;   // probe_at_point calls so far (the probe picture "sights" on each)
 
 void qqs_M2003();
 void qqs_M2005();

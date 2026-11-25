@@ -896,6 +896,9 @@ float Probe::probe_at_point(const_float_t rx, const_float_t ry, const ProbePtRai
     return NAN;
   }
   if (probe_relative) npos -= offset_xy;  // Get the nozzle position
+  #if ENABLED(QQS_UI)
+    { extern volatile uint16_t qqs_probe_n; qqs_probe_n++; }   // the probe picture "sights" on each probe
+  #endif
 
   // Move the probe to the starting XYZ
   do_blocking_move_to(npos, feedRate_t(XY_PROBE_FEEDRATE_MM_S));

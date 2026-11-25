@@ -68,6 +68,7 @@ namespace qqs {
     pj.done = false; pj.kind = kind;
     if (!run(cmd)) return;
     job_ms = millis();
+    mp.nx = 0;                            // the map waits for this job's G29
     ui.goto_screen(job_screen);
   }
 
@@ -96,12 +97,144 @@ namespace qqs {
 
   static void au_cancel() { pj.abort = true; ui.set_status("取消中…"); }
 
+  // ---- Picture layout while measuring: animation left, map / stages / time right, text below ----
+  constexpr int16_t JA_Y = HEADER_H + 4,          // animation and right panel (160 x 120 each)
+                    JL_Y = JA_Y + 122,            // main line (F_L)
+                    JT_Y = JL_Y + 32,             // time line (F_M)
+                    JH_Y = JT_Y + 26;             // hint (F_S)
+
+  static Anim2 pa;                                // the sextant girl
+  static uint16_t pa_n = 0;                       // qqs_probe_n already answered with a "sight"
+  static int8_t pa_seq = -1;                      // position in the sight sequence, -1 = idle
+  static uint8_t pa_tick = 0;
+
+  static bool job_pic() { return pj.kind != 'A' || (pj.stage != ProbeJob::AS_WAIT && pj.stage != ProbeJob::AS_COUNT); }
+  static bool job_mesh() { return mp.nx && (pj.kind == 'M' || (pj.kind == 'A' && pj.stage == ProbeJob::AS_G29)); }
+
+  static void mmss(char *o, const uint32_t s) { sprintf_P(o, PSTR("%lu:%02lu"), (unsigned long)(s / 60) % 1000, (unsigned long)(s % 60)); }
+
+  // Main line (F_L)
+  static void job_line(char *v) {
+    const char *m = ui.status_message;
+    if (job_mesh()) {
+      const uint8_t k = _MIN(mp.n_done + 1, mp.total);
+      sprintf_P(v, PSTR("網格第 %u/%u 點"), k, mp.total);   // drawn with F_L
+      return;
+    }
+    if (pj.kind == 'A') {
+      switch (pj.stage) {
+        case ProbeJob::AS_HOME: strcpy_P(v, PSTR("歸零、下降 20 mm…")); break;   // drawn with F_L
+        case ProbeJob::AS_G33:
+          if (!strncmp_P(m, PSTR("Iteration"), 9)) sprintf_P(v, PSTR("校準第 %d 輪"), atoi(m + 11));   // drawn with F_L
+          else strcpy_P(v, PSTR("Delta 校準中…"));   // drawn with F_L
+          break;
+        case ProbeJob::AS_G29: strcpy_P(v, PSTR("網格：歸零中…")); break;   // drawn with F_L
+        default: strcpy_P(v, PSTR("收尾中…"));   // drawn with F_L
+      }
+      return;
+    }
+    switch (pj.kind) {
+      case 'R': sprintf_P(v, PSTR("量第 %u/%u 次"), pj.i + (pj.running ? 1 : 0), pj.n ? pj.n : 10); break;   // drawn with F_L
+      case 'P': strcpy_P(v, pj.running ? PSTR("量中心高度…") : PSTR("準備中…")); break;   // drawn with F_L
+      case 'C':
+        if (!strncmp_P(m, PSTR("Iteration"), 9)) sprintf_P(v, PSTR("第 %d 輪"), atoi(m + 11));   // drawn with F_L
+        else strcpy_P(v, PSTR("量測中…"));   // drawn with F_L
+        break;
+      default: strcpy_P(v, PSTR("歸零中…"));   // drawn with F_L
+    }
+  }
+
+  // Time line (F_M): elapsed, and for the mesh an estimate of what is left
+  static void job_time(char *v) {
+    char a[12], b[12];
+    mmss(a, (millis() - job_ms) / 1000);
+    if (job_mesh() && mp.n_done >= 3 && mp.total > mp.n_done) {
+      const uint32_t per = (mp.t_last - mp.t_first) / (mp.n_done - 1);
+      mmss(b, per * (mp.total - mp.n_done) / 1000);
+      sprintf_P(v, PSTR("已經 %s　還要約 %s"), a, b);   // drawn with F_M
+    }
+    else sprintf_P(v, PSTR("已經 %s"), a);   // drawn with F_M
+  }
+
+  // Right panel: the probing map (G29), the steps of the one-go flow, or the elapsed time
+  static void job_panel(const bool blink) {
+    constexpr int16_t PX = 160, PW = 160, PH = 120;
+    canvas(PX, JA_Y, PW, PH, C_BG);
+    if (job_mesh()) {
+      const uint8_t nx = mp.nx, ny = mp.ny;
+      const int16_t pitch = _MIN(102 / _MAX(nx - 1, 1), 102 / _MAX(ny - 1, 1), 14), d = pitch / 2,
+                    x0 = (PW - (nx - 1) * pitch - d) / 2, y0 = (PH - (ny - 1) * pitch - d) / 2;
+      for (uint8_t j = 0; j < ny; j++) for (uint8_t i = 0; i < nx; i++) {
+        if (!mp.reachable(i, j)) continue;
+        const bool here = i == mp.ix && j == mp.iy;
+        const uint16_t c = here ? (blink ? C_TEXT : C_ACCENT) : mp.is_done(i, j) ? C_ACCENT : C_DIM;
+        const int16_t x = x0 + i * pitch, y = y0 + (ny - 1 - j) * pitch;   // back of the bed at the top
+        fill(x, y, d, d, c);
+        if (here) { fill(x - 2, y - 2, d + 4, 1, C_TEXT); fill(x - 2, y + d + 1, d + 4, 1, C_TEXT); fill(x - 2, y - 2, 1, d + 4, C_TEXT); fill(x + d + 1, y - 2, 1, d + 4, C_TEXT); }
+      }
+      return;
+    }
+    if (pj.kind == 'A') {
+      static const char * const st[] = { "歸零", "Delta 校準", "網格", "取下探頭" };   // drawn with F_M
+      const uint8_t k = pj.stage <= ProbeJob::AS_COUNT ? 0 : pj.stage - ProbeJob::AS_COUNT;   // 1 G33, 2 G29, 3 stow, 4 done
+      for (uint8_t i = 0; i < 4; i++) {
+        const uint16_t c = i < k ? C_OK : i == k ? C_ACCENT : C_DIM;
+        fill(14, 14 + i * 26 + 7, 6, 6, c);
+        text(28, 6 + i * 26 + 2, F_M, c, C_BG, st[i]);
+      }
+      return;
+    }
+    char v[12];
+    mmss(v, (millis() - job_ms) / 1000);
+    text_c(0, 24, PW, F_S, C_MUTED, C_BG, "已經");
+    text_c(0, 44, PW, F_XL, C_TEXT, C_BG, v);
+  }
+
+  static void job_lines() {
+    char v[48];
+    canvas(0, JL_Y, TFT_WIDTH, 30, C_BG);
+    job_line(v); text_c(0, 0, TFT_WIDTH, F_L, C_TEXT, C_BG, v);
+    canvas(0, JT_Y, TFT_WIDTH, 24, C_BG);
+    if (job_mesh() || pj.kind == 'A') { job_time(v); text_c(0, 0, TFT_WIDTH, F_M, C_MUTED, C_BG, v); }
+  }
+
+  // From tft_idle: the animation every 125 ms, panel and text once a second
+  void probe_anim_idle() {
+    static millis_t next_ms = 0, sec_ms = 0;
+    if (ui.currentScreen != job_screen || !job_pic() || !pa.a || !tft.queue.is_empty()) return;
+    const millis_t now = millis();
+    if (ELAPSED(now, sec_ms)) {               // map (current point blinks), main line, time
+      sec_ms = now + 500;
+      job_panel((now / 500) & 1);
+      job_lines();
+      return;                                 // one batch per call: the queue empties in between
+    }
+    if (PENDING(now, next_ms) || qqs_settings.anim_off) return;
+    next_ms = now + 125;
+    pa_tick++;
+    // Each probe: lift the sextant, wink through it (the big star flashes), lower it
+    static const uint8_t seq_arms[] = { 1, 2, 3, 4, 4, 4, 4, 4, 4, 4, 4, 3, 2, 1 },
+                         seq_star[] = { 0, 0, 0, 0, 2, 3, 3, 2, 0, 0, 0, 0, 0, 0 };
+    if (qqs_probe_n != pa_n) { pa_n = qqs_probe_n; if (pa_seq < 0) pa_seq = 0; }
+    if (pa_seq >= 0) {
+      pa.set(QQS_A2_G29_ARMS, seq_arms[pa_seq]); pa.set(QQS_A2_G29_STAR, seq_star[pa_seq]);
+      if (++pa_seq >= int8_t(COUNT(seq_arms))) pa_seq = -1;
+    }
+    else {
+      pa.set(QQS_A2_G29_ARMS, 0);
+      pa.set(QQS_A2_G29_STAR, (pa_tick & 15) == 0 ? 1 : 0);   // a small twinkle now and then
+    }
+    static const uint8_t sway[] = { 1, 2, 1, 0 };
+    pa.set(QQS_A2_G29_AHOGE, sway[(pa_tick / 3) & 3]);
+    pa.step();
+  }
+
   void job_screen() {
     static millis_t next_ms = 0;
     static uint16_t sig = 0xFFFF;
     ui.defer_status_screen();
-    if (pj.kind == 'A') {                     // stage / countdown changes redraw at once
-      const uint16_t s = (uint16_t(pj.stage) << 8) | pj.count;
+    {                                         // stage / countdown / map changes redraw at once
+      const uint16_t s = pj.kind == 'A' ? (uint16_t(pj.stage) << 8) | pj.count : 0;
       if (s != sig) { sig = s; redraw(); }
     }
     if (pj.done && !pj.running) {             // finished: go to its result
@@ -113,69 +246,36 @@ namespace qqs {
         default:  if (!pj.ok) ui.set_status("網格沒有建立完成"); go_mesh(); return;
       }
     }
-    if (!live(next_ms, 1000)) return;
+    // The picture screen refreshes itself from tft_idle; the full redraw is only for changes
+    if (!live(next_ms, job_pic() ? 30000 : 1000)) return;
     touch.clear();
     header(job_title(), job_noback);
     canvas(0, HEADER_H, TFT_WIDTH, TFT_HEIGHT - HEADER_H, C_BG);
 
     char v[48];
-    const char *m = ui.status_message;
-    if (pj.kind == 'A') {
-      switch (pj.stage) {
-        case ProbeJob::AS_WAIT:
-          text_c(0, 24, TFT_WIDTH, F_L, C_ACCENT, C_BG, "請裝上探頭");
-          text_c(0, 72, TFT_WIDTH, F_M, C_TEXT, C_BG, "裝好後用手按一下探頭");
-          text_c(0, 104, TFT_WIDTH, F_S, C_MUTED, C_BG, "按下後噴頭會往上 5 mm，再倒數 3 秒開始。");
-          break;
-        case ProbeJob::AS_COUNT:
-          sprintf_P(v, PSTR("%u"), pj.count);
-          text_c(0, 10, TFT_WIDTH, F_XL, C_ACCENT, C_BG, v);
-          text_c(0, 72, TFT_WIDTH, F_M, C_TEXT, C_BG, "手離開機器");
-          text_c(0, 104, TFT_WIDTH, F_S, C_MUTED, C_BG, "倒數完會歸零，接著自動校準和網格。");
-          break;
-        default: {
-          if (pj.stage == ProbeJob::AS_HOME) strcpy_P(v, PSTR("歸零、下降 20 mm…"));   // drawn with F_L
-          else if (pj.stage == ProbeJob::AS_G33) {
-            if (!strncmp_P(m, PSTR("Iteration"), 9)) sprintf_P(v, PSTR("校準第 %d 輪"), atoi(m + 11));   // drawn with F_L
-            else strcpy_P(v, PSTR("Delta 校準中…"));   // drawn with F_L
-          }
-          else if (pj.stage == ProbeJob::AS_G29) {
-            const char *p_ = strstr_P(m, PSTR("Point "));
-            if (p_) sprintf_P(v, PSTR("網格第 %s 點"), p_ + 6); else strcpy_P(v, PSTR("網格：歸零中…"));   // drawn with F_L
-          }
-          else strcpy_P(v, PSTR("收尾中…"));   // drawn with F_L
-          text_c(0, 40, TFT_WIDTH, F_L, C_TEXT, C_BG, v);
-          const uint32_t s = (millis() - job_ms) / 1000;
-          sprintf_P(v, PSTR("已經 %lu:%02lu"), (unsigned long)(s / 60), (unsigned long)(s % 60));
-          text_c(0, 90, TFT_WIDTH, F_M, C_MUTED, C_BG, v);
-          text_c(0, 130, TFT_WIDTH, F_S, C_MUTED, C_BG, "探頭保持裝著，全部量完才會請你取下。");
-          text_c(0, 148, TFT_WIDTH, F_S, C_MUTED, C_BG, "量的時候不要碰機器。");
-        }
+    if (!job_pic()) {                         // 'A': waiting for the tap / counting down
+      if (pj.stage == ProbeJob::AS_WAIT) {
+        text_c(0, 24, TFT_WIDTH, F_L, C_ACCENT, C_BG, "請裝上探頭");
+        text_c(0, 72, TFT_WIDTH, F_M, C_TEXT, C_BG, "裝好後用手按一下探頭");
+        text_c(0, 104, TFT_WIDTH, F_S, C_MUTED, C_BG, "按下後噴頭會往上 5 mm，再倒數 3 秒開始。");
       }
-      if (pj.stage == ProbeJob::AS_WAIT || pj.stage == ProbeJob::AS_COUNT) {
-        Btn c; c.icon = &qqs_i18_x; c.label = pj.abort ? "取消中…" : "取消"; c.enabled = !pj.abort;
-        button(4, 180, 312, 56, c, au_cancel);
+      else {
+        sprintf_P(v, PSTR("%u"), pj.count);
+        text_c(0, 10, TFT_WIDTH, F_XL, C_ACCENT, C_BG, v);
+        text_c(0, 72, TFT_WIDTH, F_M, C_TEXT, C_BG, "手離開機器");
+        text_c(0, 104, TFT_WIDTH, F_S, C_MUTED, C_BG, "倒數完會歸零，接著自動校準和網格。");
       }
+      Btn c; c.icon = &qqs_i18_x; c.label = pj.abort ? "取消中…" : "取消"; c.enabled = !pj.abort;
+      button(4, 180, 312, 56, c, au_cancel);
       return;
     }
-    switch (pj.kind) {
-      case 'R': sprintf_P(v, PSTR("量第 %u/%u 次"), pj.i + (pj.running ? 1 : 0), pj.n ? pj.n : 10); break;   // drawn with F_L
-      case 'P': strcpy_P(v, pj.running ? PSTR("歸零後用探頭量中心…") : PSTR("準備中…")); break;   // drawn with F_L
-      case 'C':
-        if (!strncmp_P(m, PSTR("Iteration"), 9)) sprintf_P(v, PSTR("第 %d 輪"), atoi(m + 11));   // drawn with F_L
-        else strcpy_P(v, PSTR("量測中…"));   // drawn with F_L
-        break;
-      default: {
-        const char *p = strstr_P(m, PSTR("Point "));     // "Probing Point 12/81"
-        if (p) sprintf_P(v, PSTR("量第 %s 點"), p + 6); else strcpy_P(v, PSTR("歸零中…"));   // drawn with F_L
-      }
-    }
-    text_c(0, 40, TFT_WIDTH, F_L, C_TEXT, C_BG, v);
-    const uint32_t s = (millis() - job_ms) / 1000;
-    sprintf_P(v, PSTR("已經 %lu:%02lu"), (unsigned long)(s / 60), (unsigned long)(s % 60));
-    text_c(0, 90, TFT_WIDTH, F_M, C_MUTED, C_BG, v);
-    text_c(0, 130, TFT_WIDTH, F_S, C_MUTED, C_BG, "出現「請裝上探頭」「請取下探頭」時照做，");
-    text_c(0, 148, TFT_WIDTH, F_S, C_MUTED, C_BG, "按「繼續」會回到這裡。量的時候不要碰機器。");
+
+    if (pa.a != &qqs_anim2_g29) { pa.begin(qqs_anim2_g29, 0, JA_Y); pa_n = qqs_probe_n; pa_seq = -1; }
+    pa.full();
+    job_panel(false);
+    job_lines();
+    canvas(0, JH_Y, TFT_WIDTH, TFT_HEIGHT - JH_Y, C_BG);
+    text_c(0, 0, TFT_WIDTH, F_S, C_DIM, C_BG, pj.kind == 'A' ? "探頭保持裝著，量完才請你取下。" : "出現提示時照做，按「繼續」會回到這裡。");
   }
 
   // =========================================================================

@@ -309,6 +309,29 @@ void qqs_M2006() {
 namespace qqs { ProbeJob pj; }
 float qqs_g33_sd = NAN;   // set by G33 when it reports "Calibration OK"
 bool qqs_probe_hold = false;   // M2007 A: probe stays "deployed" (probe.cpp skips deploy / stow)
+volatile uint16_t qqs_probe_n = 0;
+
+namespace qqs { MeshProgress mp; }
+bool qqs::MeshProgress::reachable(const uint8_t i, const uint8_t j) const {
+  return probe.can_reach(lfx + spx * i, lfy + spy * j);
+}
+void qqs_g29_begin(const float lfx, const float lfy, const float spx, const float spy, const uint8_t nx, const uint8_t ny) {
+  if (uint16_t(nx) * ny > 8 * sizeof(mp.done)) { mp.nx = 0; return; }
+  mp.lfx = lfx; mp.lfy = lfy; mp.spx = spx; mp.spy = spy; mp.nx = nx; mp.ny = ny;
+  mp.ix = mp.iy = -1; mp.n_done = 0; mp.t_first = mp.t_last = 0;
+  ZERO(mp.done);
+  uint8_t t = 0;
+  for (uint8_t j = 0; j < ny; j++) for (uint8_t i = 0; i < nx; i++) if (mp.reachable(i, j)) t++;
+  mp.total = t;
+}
+void qqs_g29_at(const uint8_t ix, const uint8_t iy) { if (mp.nx) { mp.ix = ix; mp.iy = iy; } }
+void qqs_g29_done(const uint8_t ix, const uint8_t iy) {
+  if (!mp.nx || ix >= mp.nx || iy >= mp.ny) return;
+  const uint8_t k = iy * mp.nx + ix;
+  if (!TEST(mp.done[k >> 3], k & 7)) { SBI(mp.done[k >> 3], k & 7); mp.n_done++; }
+  mp.t_last = millis(); if (!mp.t_first) mp.t_first = mp.t_last;
+  mp.ix = mp.iy = -1;
+}
 
 static void pj_begin(const char kind) {
   pj.kind = kind; pj.ok = false; pj.done = false; pj.running = true;

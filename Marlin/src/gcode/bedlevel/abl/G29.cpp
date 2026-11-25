@@ -44,6 +44,9 @@
 #endif
 
 #include "../../../lcd/marlinui.h"
+#if ENABLED(QQS_UI)
+  #include "../../../lcd/tft/qqs/qqs_tools.h"
+#endif
 #if ENABLED(EXTENSIBLE_UI)
   #include "../../../lcd/extui/ui_api.h"
 #elif ENABLED(DWIN_CREALITY_LCD)
@@ -671,6 +674,10 @@ G29_TYPE GcodeSuite::G29() {
 
       bool zig = PR_OUTER_SIZE & 1;  // Always end at RIGHT and BACK_PROBE_BED_POSITION
 
+      #if ENABLED(QQS_UI) && ENABLED(AUTO_BED_LEVELING_BILINEAR)
+        qqs_g29_begin(abl.probe_position_lf.x, abl.probe_position_lf.y, abl.gridSpacing.x, abl.gridSpacing.y, abl.grid_points.x, abl.grid_points.y);
+      #endif
+
       // Outer loop is X with PROBE_Y_FIRST enabled
       // Outer loop is Y with PROBE_Y_FIRST disabled
       for (PR_OUTER_VAR = 0; PR_OUTER_VAR < PR_OUTER_SIZE && !isnan(abl.measured_z); PR_OUTER_VAR++) {
@@ -705,6 +712,7 @@ G29_TYPE GcodeSuite::G29() {
           if (TERN0(IS_KINEMATIC, !probe.can_reach(abl.probePos))) continue;
 
           if (abl.verbose_level) SERIAL_ECHOLNPGM("Probing mesh point ", pt_index, "/", abl.abl_points, ".");
+          TERN_(QQS_UI, qqs_g29_at(abl.meshCount.x, abl.meshCount.y));
           TERN_(HAS_STATUS_MESSAGE, ui.status_printf(0, F(S_FMT " %i/%i"), GET_TEXT(MSG_PROBING_POINT), int(pt_index), int(abl.abl_points)));
 
           abl.measured_z = faux ? 0.001f * random(-100, 101) : probe.probe_at_point(abl.probePos, raise_after, abl.verbose_level);
@@ -729,6 +737,7 @@ G29_TYPE GcodeSuite::G29() {
             const float z = abl.measured_z + abl.Z_offset;
             abl.z_values[abl.meshCount.x][abl.meshCount.y] = z;
             TERN_(EXTENSIBLE_UI, ExtUI::onMeshUpdate(abl.meshCount, z));
+            TERN_(QQS_UI, qqs_g29_done(abl.meshCount.x, abl.meshCount.y));
 
           #endif
 

@@ -8,6 +8,7 @@
 #include "../../../MarlinCore.h"
 #include "../../../sd/cardreader.h"
 #include "qqs_draw.h"
+#include "qqs_anim2_data.h"
 
 namespace qqs {
   inline void redraw() { ui.refresh(LCDVIEW_REDRAW_NOW); }
@@ -43,4 +44,18 @@ namespace qqs {
   // qqs_ui_probe.cpp (v3.3)
   void go_probe();
   void go_mesh();
+
+  // qqs_anim2.cpp: the probe / PID animations (base picture + slots, see qqs_tools/anim2/gen_anim2.py)
+  struct Anim2 {
+    const qqs_anim2_t *a = nullptr;
+    int16_t x = 0, y = 0;
+    uint8_t cur[8], st[8];                // drawn / wanted state per slot
+    void begin(const qqs_anim2_t &an, const int16_t x_, const int16_t y_);   // every slot to its base state
+    void set(const uint8_t slot, const uint8_t s);
+    void full();                          // the whole 160 x 120 picture, in its own canvas
+    bool step();                          // only the slots that changed (each its own canvas); false: nothing to do
+  };
+  // From tft_idle: animation frames and the once-a-second values on the probe job / PID screens
+  void probe_anim_idle();
+  void pid_anim_idle();
 }
