@@ -95,9 +95,23 @@ enum ListingFlags : uint8_t { LS_LONG_FILENAME, LS_ONLY_BIN, LS_TIMESTAMP };
   #include "../libs/autoreport.h"
 #endif
 
+#if ENABLED(QQS_UI)
+  #define QQS_LFN_SEQ  8      // long names are read up to 8 VFAT entries (104 UTF-16 units), longer ones end in "…"
+  #define QQS_JOB_LFN 160     // bytes kept for the long name (UTF-8) of the file being printed
+#endif
+
 class CardReader {
 public:
   static card_flags_t flag;                         // Flags (above)
+
+  #if ENABLED(QQS_UI)
+    // QQS-Pro web page (M2012 / M2013): Marlin's own long names turn every non-Latin character into '_',
+    // so these read the VFAT entries themselves and give UTF-8.
+    static char qqs_job_lfn[QQS_JOB_LFN];           // long name of the file opened by openFileRead
+    static bool qqs_open_dir(MediaFile &d, const char *path);    // path of 8.3 names from the root ("/A/B")
+    static bool qqs_next(MediaFile &d, dir_t &p, char *name, const uint16_t cap);   // next folder / *.G* file
+    static void qqs_83(char *buf, const dir_t &p);   // its 8.3 name ("NAME.EXT")
+  #endif
   static char filename[FILENAME_LENGTH],            // DOS 8.3 filename of the selected item
               longFilename[LONG_FILENAME_LENGTH];   // Long name of the selected item
 

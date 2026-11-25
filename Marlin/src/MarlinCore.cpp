@@ -30,6 +30,9 @@
 
 #include "MarlinCore.h"
 #include "feature/qqs_perf.h"
+#if ALL(MKS_WIFI, QQS_UI)
+  #include "module/mks_wifi/qqs_wifi_web.h"
+#endif
 
 #include "HAL/shared/Delay.h"
 #include "HAL/shared/esp_wifi.h"
@@ -880,6 +883,10 @@ void idle(const bool no_stepper_sleep/*=false*/) {
 
   // Direct Stepping
   TERN_(DIRECT_STEPPING, page_manager.write_responses());
+
+  #if ALL(MKS_WIFI, QQS_UI)
+    qqs_wifi_task();   // QQS-Pro: web page file list, Wi-Fi status during heat waits
+  #endif
 
   // Update the LVGL interface
   TERN_(HAS_TFT_LVGL_UI, LV_TASK_HANDLER());

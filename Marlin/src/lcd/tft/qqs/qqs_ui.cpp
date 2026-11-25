@@ -474,6 +474,15 @@ namespace qqs {
     button(162, 150, 154, 84, s, fc_start);
   }
 
+  // Web page (M2014): start only from the home screen or the file list, never in the middle of a tool.
+  bool wifi_can_start() {
+    return ui.on_status_screen() || ui.currentScreen == files_screen || ui.currentScreen == file_confirm_screen;
+  }
+  void wifi_started() {
+    if (ui.currentScreen == files_screen || ui.currentScreen == file_confirm_screen) ui.return_to_status();
+    ui.reset_status();
+  }
+
   // =========================================================================
   // Actions on the home screen
   // =========================================================================
@@ -967,7 +976,7 @@ namespace qqs {
   // lines (the module reads reply lines into 100-byte buffers):
   //   QQS s=<0 idle 1 printing 2 heating 3 paused 4 stopping> p=<%> e=<s> r=<s, -1 unknown> t=<0.1°>/<°> b=<0.1°>/<°>
   //       f=<fan %> v=<speed %> w=<flow %> z=<Z babystep, 0.01 mm> a=<1 animation off>
-  //   QQSN <file name>   (only while a job runs; cut to 86 bytes on a UTF-8 boundary)
+  //   QQSN <file name>   (only while a job runs; UTF-8 long name, see card.qqs_job_lfn)
   void wifi_status(void (*out)(const char *)) {
     char b[100];
     const bool active = printingIsActive(), paused = printingIsPaused();
@@ -989,17 +998,19 @@ namespace qqs {
     // The name is taken once, on the first poll of a job: card.longFilename / filename are CardReader's scratch
     // buffers and any later directory listing (M20 from a slicer, ...) overwrites them. The module polls every
     // 2-5 s whether or not a page is open, so the first poll comes right after the job starts.
-    static char jn[87] = "";
+    // card.qqs_job_lfn is the long name in UTF-8 read when the file was opened (Marlin's own long name turns CJK
+    // into '_'). The module (QQS1.2+) takes lines up to 1 KB; the name is cut on a character boundary anyway.
+    static char jn[QQS_JOB_LFN] = "";
     static uint8_t prev = 0;
     if (st && !prev) {
-      const char *n = card.longFilename[0] ? card.longFilename : card.filename;
+      const char *n = card.qqs_job_lfn[0] ? card.qqs_job_lfn : card.longFilename[0] ? card.longFilename : card.filename;
       size_t len = strlen(n);
-      if (len > 86) { len = 86; while (len && (uint8_t(n[len]) & 0xC0) == 0x80) len--; }   // not inside a UTF-8 character
+      if (len > sizeof(jn) - 1) { len = sizeof(jn) - 1; while (len && (uint8_t(n[len]) & 0xC0) == 0x80) len--; }   // not inside a UTF-8 character
       for (size_t i = 0; i < len; i++) { const char c = n[i]; jn[i] = (c == '\r' || c == '\n') ? ' ' : c; }
       jn[len] = '\0';
     }
     prev = st;
-    if (st) { snprintf_P(b, sizeof(b), PSTR("QQSN %s\n"), jn); out(b); }
+    if (st) { char nb[QQS_JOB_LFN + 8]; snprintf_P(nb, sizeof(nb), PSTR("QQSN %s\n"), jn); out(nb); }
   }
 
   // =========================================================================

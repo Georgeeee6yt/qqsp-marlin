@@ -7,6 +7,7 @@
 #include "mks_wifi_sd.h"
 #include "../../lcd/tft/qqs/qqs_wifi_diag.h"
 #include "qqs_espflash.h"
+#include "qqs_wifi_web.h"
 
 qqs_wifi_diag_t qqs_wdiag;
 qqs_wifi_net_t qqs_wnet;
@@ -210,7 +211,18 @@ void mks_wifi_out_add(uint8_t *data, uint32_t size){
 	}
 }
 
+// QQS-Pro: qqs_wifi_task() (idle) also feeds the parser; it must not while the parser itself is running.
+static bool in_input = false;
+bool mks_wifi_in_input() { return in_input; }
+static uint8_t mks_wifi_input_impl(uint8_t data);
 uint8_t mks_wifi_input(uint8_t data){
+	in_input = true;
+	const uint8_t r = mks_wifi_input_impl(data);
+	in_input = false;
+	return r;
+}
+
+static uint8_t mks_wifi_input_impl(uint8_t data){
 	ESP_PROTOC_FRAME esp_frame;
 	#ifdef MKS_WIFI_ENABLED_WIFI_CONFIG 
 	static uint8_t get_packet_from_esp=0;
@@ -419,13 +431,13 @@ void mks_wifi_parse_packet(ESP_PROTOC_FRAME *packet){
 			}
 			break;
 		case ESP_TYPE_GCODE:
-				char gcode_cmd[50];
+				char gcode_cmd[128];   // QQS-Pro: 50 -> 128 (M2013 / M2014 carry a hex path); queued lines still < MAX_CMD_SIZE
 				uint32_t cmd_index;
 				
 				bool too_long;   // QQS-Pro: a line longer than the buffer is dropped instead of overflowing the stack
 				too_long = false;
 				cmd_index = 0;
-				memset(gcode_cmd,0,50);
+				memset(gcode_cmd,0,sizeof(gcode_cmd));
 				for(uint32_t i=0; i<packet->dataLen; i++){
 					
 					if(packet->data[i] != 0x0A){
@@ -435,10 +447,14 @@ void mks_wifi_parse_packet(ESP_PROTOC_FRAME *packet){
 					}else{
 						qqs_wdiag.last_in_i = (qqs_wdiag.last_in_i + 1) % 3;
 						qqs_diag_copy(qqs_wdiag.last_in[qqs_wdiag.last_in_i], too_long ? "(too long, dropped)" : gcode_cmd);
-						if(!too_long) GCodeQueue::ring_buffer.enqueue((const char *)gcode_cmd, false, MKS_WIFI_SERIAL_NUM);
+						// QQS-Pro: the web page's queries are answered here (also while the queue is stuck in a heat wait)
+						if(too_long || cmd_index >= MAX_CMD_SIZE) {}
+						else if(qqs_wifi_direct(gcode_cmd)) {}
+						else if(qqs_wifi_idle_ctx && GCodeQueue::ring_buffer.full()) {}   // dropped: the module repeats its queries
+						else GCodeQueue::ring_buffer.enqueue((const char *)gcode_cmd, false, MKS_WIFI_SERIAL_NUM);
 						too_long = false;
 						cmd_index = 0;
-						memset(gcode_cmd,0,50);
+						memset(gcode_cmd,0,sizeof(gcode_cmd));
 					}
 				}
 			break;
@@ -446,7 +462,9 @@ void mks_wifi_parse_packet(ESP_PROTOC_FRAME *packet){
 				DEBUG("[FILE_FIRST]");
 				//Передача файла останавливает все процессы, 
 				//поэтому печать в этот момент не возможна.
-				if (!CardReader::isPrinting()){
+				if (qqs_wifi_idle_ctx) {
+					DEBUG("upload during a heat wait ignored");   // QQS-Pro: read from idle(): never start an upload there
+				}else if (!CardReader::isPrinting()){
 					mks_wifi_start_file_upload(packet);
 				}else{
 					//Попытка запустить передачу файла во время печати

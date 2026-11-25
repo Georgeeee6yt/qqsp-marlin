@@ -199,6 +199,121 @@ char *createFilename(char * const buffer, const dir_t &p) {
   return buffer;
 }
 
+#if ENABLED(QQS_UI)
+
+char CardReader::qqs_job_lfn[QQS_JOB_LFN];
+
+void CardReader::qqs_83(char *buf, const dir_t &p) { createFilename(buf, p); }
+
+bool CardReader::qqs_open_dir(MediaFile &d, const char *path) {
+  if (!isMounted()) return false;
+  d = root;
+  while (*path) {
+    while (*path == '/') path++;
+    if (!*path) break;
+    char seg[13];
+    uint8_t n = 0;
+    while (*path && *path != '/') { if (n >= 12) return false; seg[n++] = *path++; }
+    seg[n] = '\0';
+    MediaFile sub;
+    if (!sub.open(&d, seg, O_READ) || !sub.isDir()) return false;
+    d = sub;
+  }
+  d.rewind();
+  return true;
+}
+
+static uint8_t qqs_sfn_sum(const uint8_t *n) {
+  uint8_t s = 0;
+  for (uint8_t i = 0; i < 11; i++) s = ((s & 1) << 7) + (s >> 1) + n[i];
+  return s;
+}
+
+// Append code point c as UTF-8 if it fits (keeping room for "…" and the terminator).
+static bool qqs_put_utf8(char *name, uint16_t &k, const uint16_t cap, uint32_t c) {
+  const uint8_t need = c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;
+  if (k + need + 4 > cap) return false;
+  if (need == 1) name[k++] = char(c);
+  else if (need == 2) { name[k++] = char(0xC0 | (c >> 6)); name[k++] = char(0x80 | (c & 0x3F)); }
+  else if (need == 3) { name[k++] = char(0xE0 | (c >> 12)); name[k++] = char(0x80 | ((c >> 6) & 0x3F)); name[k++] = char(0x80 | (c & 0x3F)); }
+  else { name[k++] = char(0xF0 | (c >> 18)); name[k++] = char(0x80 | ((c >> 12) & 0x3F)); name[k++] = char(0x80 | ((c >> 6) & 0x3F)); name[k++] = char(0x80 | (c & 0x3F)); }
+  return true;
+}
+
+// Next folder or *.G* file in d (same filter as the printer's file list), with its name in UTF-8:
+// the long name when there is a valid one, else the 8.3 name (lower-cased as Windows marks it).
+bool CardReader::qqs_next(MediaFile &d, dir_t &p, char *name, const uint16_t cap) {
+  uint16_t u[QQS_LFN_SEQ * 13];
+  uint32_t have = 0;
+  uint8_t last = 0, sum = 0;
+  while (d.read(&p, sizeof(p)) == sizeof(p)) {
+    if (p.name[0] == DIR_NAME_FREE) return false;
+    if (p.name[0] == DIR_NAME_DELETED) { last = 0; continue; }
+    if (DIR_IS_LONG_NAME(&p)) {
+      const vfat_t &v = *(const vfat_t *)&p;
+      const uint8_t seq = v.sequenceNumber & 0x1F;
+      if (v.sequenceNumber & 0x40) { last = seq; sum = v.checksum; have = 0; }
+      else if (!last || v.checksum != sum) { last = 0; continue; }
+      if (!WITHIN(seq, 1, last) || last > 20) { last = 0; continue; }
+      have |= 1UL << (seq - 1);
+      if (seq <= QQS_LFN_SEQ) {
+        uint16_t * const o = &u[(seq - 1) * 13];
+        for (uint8_t i = 0; i < 5; i++) o[i] = v.name1[i];
+        for (uint8_t i = 0; i < 6; i++) o[5 + i] = v.name2[i];
+        for (uint8_t i = 0; i < 2; i++) o[11 + i] = v.name3[i];
+      }
+      continue;
+    }
+    const uint8_t seqs = (last && have == (1UL << last) - 1 && qqs_sfn_sum(p.name) == sum) ? last : 0;
+    last = 0;
+    if (p.name[0] == '.' || (p.attributes & (DIR_ATT_HIDDEN | DIR_ATT_VOLUME_ID))) continue;
+    if (!DIR_IS_SUBDIR(&p) && !(p.name[8] == 'G' && p.name[9] != '~')) continue;
+
+    uint16_t k = 0;
+    bool cut = false;
+    if (seqs) {
+      const uint16_t units = _MIN(seqs, QQS_LFN_SEQ) * 13;
+      for (uint16_t i = 0; i < units; i++) {
+        uint32_t c = u[i];
+        if (c == 0 || c == 0xFFFF) break;
+        if (c >= 0xD800 && c <= 0xDBFF && i + 1 < units && u[i + 1] >= 0xDC00 && u[i + 1] <= 0xDFFF)
+          c = 0x10000 + ((c - 0xD800) << 10) + (u[++i] - 0xDC00);
+        else if ((c >= 0xD800 && c <= 0xDFFF) || c < 0x20) c = '_';
+        if (!qqs_put_utf8(name, k, cap, c)) { cut = true; break; }
+      }
+      if (seqs > QQS_LFN_SEQ) cut = true;
+    }
+    if (!k) {   // no usable long name: the 8.3 name (bytes outside ASCII would not be valid UTF-8)
+      char f[13];
+      createFilename(f, p);
+      const char * const dot = strchr(f, '.');
+      for (const char *c = f; *c && k + 1 < cap; c++) {
+        char ch = (uint8_t(*c) < 0x20 || uint8_t(*c) > 0x7E) ? '?' : *c;
+        if (p.reservedNT & ((dot && c > dot) ? 0x10 : 0x08)) ch = tolower(ch);   // NT case bits: base 0x08, ext 0x10
+        name[k++] = ch;
+      }
+    }
+    else if (cut) { name[k++] = char(0xE2); name[k++] = char(0x80); name[k++] = char(0xA6); }   // "…"
+    name[k] = '\0';
+    return true;
+  }
+  return false;
+}
+
+// Long name of dos (an 8.3 name, any case) in dir, or "" when it has none.
+static void qqs_find_lfn(MediaFile dir, const char *dos, char *out, const uint16_t cap) {
+  out[0] = '\0';
+  dir.rewind();
+  dir_t p;
+  char n[QQS_JOB_LFN], f[13];
+  while (CardReader::qqs_next(dir, p, n, sizeof(n))) {
+    CardReader::qqs_83(f, p);
+    if (!strcasecmp(f, dos)) { strncpy(out, n, cap - 1); out[cap - 1] = '\0'; return; }
+  }
+}
+
+#endif // QQS_UI
+
 //
 // Return 'true' if the item is a folder, G-code file or Binary file
 //
@@ -722,6 +837,7 @@ void CardReader::openFileRead(const char * const path, const uint8_t subcall_typ
   if (file.open(diveDir, fname, O_READ)) {
     filesize = file.fileSize();
     sdpos = 0;
+    TERN_(QQS_UI, qqs_find_lfn(*diveDir, fname, qqs_job_lfn, sizeof(qqs_job_lfn)));   // for the web page
 
     { // Don't remove this block, as the PORT_REDIRECT is a RAII
       PORT_REDIRECT(SerialMask::All);
