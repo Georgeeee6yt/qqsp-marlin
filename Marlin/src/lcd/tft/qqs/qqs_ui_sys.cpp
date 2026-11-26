@@ -20,6 +20,9 @@
 #include "../../../module/settings.h"
 #include "../../../gcode/queue.h"
 #include "../../../module/printcounter.h"
+#if ENABLED(MKS_WIFI)
+  #include "qqs_wifi_diag.h"
+#endif
 #if ENABLED(ADVANCED_PAUSE_FEATURE)
   #include "../../../feature/pause.h"
 #endif
@@ -341,12 +344,38 @@ namespace qqs {
   // Kill screen (thermal runaway, MAXTEMP ...): drawn once, Marlin stops after it
   // =========================================================================
 
+  // What the heaters were doing when a temperature error stopped the printer (taken before kill() zeroes the
+  // targets), so a "Heating Failed" found hours later still says something (George 2026-11-26).
+  static struct { bool taken; int16_t bed10, bed_t, e10, e_t; uint32_t ms; } ks;
+
+  void kill_snapshot() {
+    if (ks.taken) return;
+    ks.taken = true;
+    ks.bed10 = int16_t(thermalManager.degBed() * 10); ks.bed_t = thermalManager.degTargetBed();
+    ks.e10 = int16_t(thermalManager.degHotend(0) * 10); ks.e_t = thermalManager.degTargetHotend(0);
+    ks.ms = millis();
+  }
+
   void kill_text(const char *msg) {
-    canvas(0, 40, TFT_WIDTH, 150, C_STOPBG);
+    canvas(0, 30, TFT_WIDTH, 200, C_STOPBG);
     text_c(0, 0, TFT_WIDTH, F_M, C_TEXT, C_STOPBG, "印表機已停止");
-    text_c(0, 40, TFT_WIDTH, F_M, C_WARN, C_STOPBG, (msg && *msg) ? msg : "錯誤");
-    text_c(0, 90, TFT_WIDTH, F_S, C_TEXT, C_STOPBG, "加熱已全部關閉。");
-    text_c(0, 110, TFT_WIDTH, F_S, C_TEXT, C_STOPBG, "請關機檢查後再重新開機。");
+    text_c(0, 36, TFT_WIDTH, F_M, C_WARN, C_STOPBG, (msg && *msg) ? msg : "錯誤");
+    text_c(0, 80, TFT_WIDTH, F_S, C_TEXT, C_STOPBG, "加熱已全部關閉。");
+    text_c(0, 100, TFT_WIDTH, F_S, C_TEXT, C_STOPBG, "請關機檢查後再重新開機。");
+    if (ks.taken) {
+      char v[64];
+      sprintf_P(v, PSTR("停止時 熱床 %d.%d/%d°C　噴頭 %d.%d/%d°C"),   // drawn with F_S
+                ks.bed10 / 10, abs(ks.bed10 % 10), ks.bed_t, ks.e10 / 10, abs(ks.e10 % 10), ks.e_t);
+      text_c(0, 140, TFT_WIDTH, F_S, C_MUTED, C_STOPBG, v);
+      #if ENABLED(MKS_WIFI)
+        if (qqs_wdiag.up_end_ms)
+          sprintf_P(v, PSTR("開機 %lu 分　上次上傳後 %lu 秒"), (unsigned long)(ks.ms / 60000UL),   // drawn with F_S
+                    (unsigned long)((ks.ms - qqs_wdiag.up_end_ms) / 1000UL));
+        else
+      #endif
+          sprintf_P(v, PSTR("開機 %lu 分"), (unsigned long)(ks.ms / 60000UL));   // drawn with F_S
+      text_c(0, 160, TFT_WIDTH, F_S, C_MUTED, C_STOPBG, v);
+    }
   }
 
 } // namespace qqs

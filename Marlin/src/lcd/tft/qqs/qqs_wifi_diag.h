@@ -24,6 +24,7 @@ struct qqs_wifi_diag_t {
   uint8_t up_first[8];       // first 8 bytes of the first packet (or of the partial buffer if none completed)
   uint8_t up_io4;            // flow-control pin level at the end
   uint32_t up_last_sector;
+  uint32_t up_end_ms;        // millis() when the last upload ended (any way), 0 = none yet
 };
 
 extern qqs_wifi_diag_t qqs_wdiag;

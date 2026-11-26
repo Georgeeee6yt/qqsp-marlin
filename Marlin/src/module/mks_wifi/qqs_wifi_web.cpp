@@ -9,7 +9,7 @@
  *                    then "QQSE <count> <code>"  0 ok, 1 cut at LIST_MAX, 3 no such folder, 4 no card, 5 bad argument
  *                  The lines go out a few at a time from idle() (the link is 115200 baud: ~10 KB/s).
  *   M2014 H<hex>   start printing a file (hex of its 8.3 path from the root):
- *                    "QQSP <code>"  0 started, 1 a job is open, 2 printer busy (moving / not on the home or
+ *                    "QQSP <code>"  (only *.G* files; others = 3)  0 started, 1 a job is open, 2 printer busy (moving / not on the home or
  *                    file screens), 3 no such file, 4 no card, 5 bad argument
  *
  * While an SD print waits for its temperatures (M109 / M190) Marlin runs only idle(), so nothing reads the
@@ -122,7 +122,11 @@ static bool file_exists(const char *path) {
 static void print_start(const char *arg) {
   char path[64];
   uint8_t r;
-  if (!unhex(arg, path, sizeof(path)) || path[0] != '/' || strlen(path) > 50) r = 5;   // M23 injection limit
+  const char *dot = nullptr;
+  const bool ok = unhex(arg, path, sizeof(path)) && path[0] == '/' && strlen(path) <= 50;   // M23 injection limit
+  if (ok) { dot = strrchr(path, '.'); if (dot && strchr(dot, '/')) dot = nullptr; }
+  if (!ok) r = 5;
+  else if (!dot || (dot[1] | 0x20) != 'g') r = 3;   // only G-code (*.G*), like the lists: "not found"
   else if (printingIsActive() || printingIsPaused() || card.isFileOpen()) r = 1;
   else if (qqs_wifi_idle_ctx || planner.has_blocks_queued() || !qqs::wifi_can_start()) r = 2;
   else {

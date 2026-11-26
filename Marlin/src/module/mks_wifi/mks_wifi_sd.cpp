@@ -118,6 +118,17 @@ uint8_t get_dos_filename(char *filename, char* dosfilename){
 
 
 
+// QQS-Pro: the upload turns both heaters off; every way out (also the early ones) gives them back and
+// lets the module send again. Before v3.2.20 a failed mount / open left the heaters at 0 and IO4 high.
+static void upload_leave(const int16_t bed, const int16_t e0) {
+   WRITE(MKS_WIFI_IO4, LOW); //Включить передачу от ESP
+   thermalManager.setTargetBed(bed);
+   thermalManager.setTargetHotend(e0, 0);
+   thermalManager.task();     // PWM back on now, not at the next idle()
+   qqs_wdiag.up_end_ms = millis() | 1;
+   DEBUG("Restore thermal settings E0:%d Bed:%d", e0, bed);
+}
+
 void mks_wifi_start_file_upload(ESP_PROTOC_FRAME *packet){
 	char str[100];
    UINT bytes_writen=0;
@@ -174,6 +185,7 @@ void mks_wifi_start_file_upload(ESP_PROTOC_FRAME *packet){
       ui.set_status((const char *)"Error SD mount",true);
       ui.update();
       mks_wifi_sd_deinit();
+      upload_leave(save_bed, save_e0);
       return;
    }
    
@@ -186,6 +198,7 @@ void mks_wifi_start_file_upload(ESP_PROTOC_FRAME *packet){
       ui.set_status((const char *)"File open error",true);
       ui.update();
       mks_wifi_sd_deinit();
+      upload_leave(save_bed, save_e0);
       return;
    }
 
@@ -426,12 +439,8 @@ void mks_wifi_start_file_upload(ESP_PROTOC_FRAME *packet){
          BUZZ(436,392);
    }
 
-   WRITE(MKS_WIFI_IO4, LOW); //Включить передачу от ESP 
-
    TERN_(USE_WATCHDOG, wd_reset());
-   thermalManager.setTargetBed(save_bed);
-   thermalManager.setTargetHotend(save_e0,0);
-   DEBUG("Restore thermal settings E0:%d Bed:%d",save_bed,save_e0);
+   upload_leave(save_bed, save_e0);
 
 }
 
