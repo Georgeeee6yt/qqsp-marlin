@@ -155,13 +155,16 @@ static void fail(const uint8_t e, const uint16_t code = 0);
 // Look for the answer to `op`. 1 = ok (data in resp_data / resp_val), 0 = not yet, -1 = failed.
 static const uint8_t *resp_data;
 static uint32_t resp_val;
-static int8_t resp_poll(const uint8_t op, const uint8_t resp_len = 0) {
+// soft: an error status is not fail()ed but returned as -2 with the code in *soft (caller decides).
+static int8_t resp_poll(const uint8_t op, const uint8_t resp_len = 0, uint16_t *soft = nullptr) {
   while (rx_pump()) {
     const uint8_t *p = RXB;
     if (rx_flen < 8 || p[0] != 1 || p[1] != op) continue;   // not ours (extra SYNC answers, noise)
     resp_val = le32(p + 4);
     const uint8_t *d = p + 8;
     const uint16_t dl = rx_flen - 8;
+    const uint8_t *e = (dl >= resp_len + 2u) ? d + resp_len : (dl >= 2 ? d : nullptr);
+    if (e && e[0] && soft) { *soft = (e[0] << 8) | e[1]; return -2; }
     if (dl < resp_len + 2u) { if (dl >= 2 && d[0]) fail(EE_CMD, (d[0] << 8) | d[1]); else fail(EE_DATA); return -1; }
     if (d[resp_len]) { fail(EE_CMD, (d[resp_len] << 8) | d[resp_len + 1]); return -1; }
     resp_data = d;
@@ -212,6 +215,7 @@ static uint8_t baud_i, tries, sync_n;
 static uint32_t t_ms, t_xfer, tmo;
 static uint32_t addr, img_size, pos, seq;
 static uint16_t blk;
+static uint8_t wr_h[16], wr_chk;               // the FLASH_DATA block in flight (for a resend)
 static bool owns = false, sd_on = false, f_on = false, waiting = false;
 static uint16_t rep0;
 static Md5 md;
@@ -219,6 +223,7 @@ static Md5 md_seg;                   // backup: the current READ_FLASH (resumes 
 static uint32_t seg0, seg_end;        // backup: the current READ_FLASH (at most READ_SEG bytes)
 #define READ_SEG 0x40000              // 256 KB per READ_FLASH: a damaged packet costs at most this again
 #define READ_RESUMES 8
+#define WRITE_RESENDS 16                      // FLASH_DATA blocks sent again after the stub saw them damaged
 static const char *img_name;
 static uint8_t md5_ours[16];
 
@@ -480,7 +485,17 @@ void espf_poll() {
 
     case S_WRITE: {
       if (waiting) {                      // answer to the last block
-        const int8_t r = resp_poll(0x03);
+        uint16_t code = 0;
+        const int8_t r = resp_poll(0x03, 0, &code);
+        if (r == -2) {
+          // The stub checks length and checksum BEFORE it writes and does not move on (esp-flasher-stub
+          // 2.0.0 s_flash_data), so a block damaged on the wire can simply be sent again, same seq.
+          const bool wire = code == 0xC100 || code == 0xC000 || code == 0xC800 || code == 0xC900;
+          if (!wire || ++espf.retries > WRITE_RESENDS) return fail(EE_CMD, code);
+          send_cmd(0x03, wr_h, 16, FBUF, blk, wr_chk);
+          t_ms = espf_hal_ms();
+          return;
+        }
         if (r < 0) return;
         if (!r) { if (now - t_ms > 10000) fail(EE_TIMEOUT); return; }
         waiting = false;
@@ -502,8 +517,9 @@ void espf_poll() {
       if (n < blk) memset(d + n, 0xFF, blk - n);      // the stub only writes what is left of the size
       uint8_t chk = 0xEF;
       for (uint16_t i = 0; i < blk; i++) chk ^= d[i];
-      uint8_t h[16]; put32(h, blk); put32(h + 4, seq); put32(h + 8, 0); put32(h + 12, 0);
-      send_cmd(0x03, h, 16, d, blk, chk);
+      put32(wr_h, blk); put32(wr_h + 4, seq); put32(wr_h + 8, 0); put32(wr_h + 12, 0);
+      wr_chk = chk;                       // FBUF keeps the block until the stub has taken it
+      send_cmd(0x03, wr_h, 16, d, blk, chk);
       pos += n; seq++;
       waiting = true; t_ms = espf_hal_ms();
       return;

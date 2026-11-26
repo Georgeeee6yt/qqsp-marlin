@@ -124,6 +124,10 @@ run('write_error_reported_late', 'fw', {'ESPSTUB.BIN': stub, 'MksWifi.bin': mks}
     check=lambda d, out, kv: None if kv['code'] == '0xc400' else 'code %s' % kv['code'])
 run('flash_content_wrong_md5', 'fw', {'ESPSTUB.BIN': stub, 'MksWifi.bin': mks}, flash, faults=['badmd5'], expect_err=14,
     check=lambda d, out, kv: None if 'MksWifi.bin' in os.listdir(d + '/sd') else 'renamed although not verified')
+run('write_wire_damage_resent', 'web', {'ESPSTUB.BIN': stub, 'MksWifi_WebView.bin': web}, flash, faults=['wireflip'],
+    check=lambda d, out, kv: chk_web(d, out, kv) or (None if kv['retries'] == '3' else 'retries %s' % kv['retries']))
+run('write_wire_damage_always', 'fw', {'ESPSTUB.BIN': stub, 'MksWifi.bin': mks}, flash, faults=['wireflipalways'], expect_err=11,
+    check=lambda d, out, kv: None if kv['code'] == '0xc100' and kv['retries'] == '17' else 'code %s retries %s' % (kv['code'], kv['retries']))
 run('slow_erase', 'fw', {'ESPSTUB.BIN': stub, 'MksWifi.bin': mks}, flash, faults=['slowerase'], check=chk_fw)
 
 print('\n%s' % ('ALL PASSED' if not fails else '%d FAILED' % fails))

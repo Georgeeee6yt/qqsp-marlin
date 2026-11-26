@@ -52,6 +52,7 @@ mode = 'rom' if not ctl else 'off'
 baud = 115200
 deaf = False
 mem = {}            # addr -> bytes uploaded to RAM
+wire_hits = {}      # FLASH_DATA seq -> times damaged on the wire
 mem_cur = None
 regs = {}
 flash_size_set = 0
@@ -197,6 +198,12 @@ def handle(f):
         ok()
     elif op == 0x03:                                     # FLASH_DATA: answer, then write
         n, seq = struct.unpack('<II', d[:8]); data = d[16:]
+        # wire damage the stub sees: 'wireflip' = blocks 2 and 5 arrive damaged once (5: twice),
+        # 'wireflipalways' = block 2 always arrives damaged
+        if ('wireflip' in a.fault and wire_hits.get(seq, 0) < {2: 1, 5: 2}.get(seq, 0)) or \
+           ('wireflipalways' in a.fault and seq == 2):
+            wire_hits[seq] = wire_hits.get(seq, 0) + 1
+            data = bytearray(data); data[100] ^= 0x10; data = bytes(data)
         c = 0xEF
         for b in data: c ^= b
         if n != len(data): resp(op, 0, b'', 0xC900); return

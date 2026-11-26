@@ -53,7 +53,7 @@ struct EspfStatus {
   uint8_t err;          // EspfErr, EE_NONE = ok so far
   uint16_t err_code;    // status code from the ESP for EE_CMD
   uint8_t reported;     // after the reboot: 1 = the module sent a status packet
-  uint8_t retries;      // backup: times the read was resumed after a lost / bad packet
+  uint8_t retries;      // backup: times the read was resumed; write: blocks sent again (damaged on the wire)
   uint32_t done, total; // bytes for the transfer stage
   uint32_t bps;         // bytes / s in the transfer stage
   uint32_t baud;        // link speed reached
