@@ -135,11 +135,26 @@ namespace qqs {
 
   void header(const char *title, screenFunc_t back) {
     canvas(0, 0, TFT_WIDTH, HEADER_H, C_BAR);
-    bitmap(6, (HEADER_H - qqs_i18_chevron_left.h) / 2, qqs_i18_chevron_left, C_TEXT, C_BAR);
-    text(26, (HEADER_H - F_M.height) / 2, F_M, C_TEXT, C_BAR, "返回");
+    if (back) {   // no back button at all when there is no way back (e.g. while the Wi-Fi module is being flashed)
+      bitmap(6, (HEADER_H - qqs_i18_chevron_left.h) / 2, qqs_i18_chevron_left, C_TEXT, C_BAR);
+      text(26, (HEADER_H - F_M.height) / 2, F_M, C_TEXT, C_BAR, "返回");
+    }
     text_c(0, (HEADER_H - F_M.height) / 2, TFT_WIDTH, F_M, C_TEXT, C_BAR, title);
     fill(0, HEADER_H - 1, TFT_WIDTH, 1, C_BORDER);
     if (back) touch.add_control(BUTTON, 0, 0, 84, HEADER_H + 6, (intptr_t)back);
+  }
+
+  void ask_box(const char *title, const char *l1, const char *l2, const Btn &no, screenFunc_t no_cb, const Btn &yes, screenFunc_t yes_cb) {
+    constexpr int16_t X = 20, Y = 40, W = TFT_WIDTH - 2 * X, H = 176;
+    touch.clear();                       // modal: only its two buttons answer
+    canvas(X, Y, W, H, C_BAR);
+    frame(0, 0, W, H, C_ACCENT);
+    frame(1, 1, W - 2, H - 2, C_ACCENT);
+    text_c(0, 16, W, F_M, C_ACCENT, C_BAR, title);
+    if (l1) text_c(0, 54, W, F_S, C_MUTED, C_BAR, l1);
+    if (l2) text_c(0, 74, W, F_S, C_TEXT, C_BAR, l2);
+    button(X + 12, Y + H - 72, (W - 36) / 2, 60, no, no_cb);
+    button(X + 24 + (W - 36) / 2, Y + H - 72, (W - 36) / 2, 60, yes, yes_cb);
   }
 
   const char *fmt_int(int32_t v, const char *suffix) {

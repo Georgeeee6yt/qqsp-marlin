@@ -663,6 +663,9 @@ namespace qqs {
   static uint8_t pid_state = 0;     // 0 idle, 1 hotend running, 2 bed running, 3 done
   static millis_t pid_ms = 0;
   static bool pid_bed_last = false; // which one was tuned last (for the "done" highlight)
+  static bool pid_stopped = false;  // stopped by hand: no "save?" question
+  static bool pid_ask = false;      // the centred "save?" box is up
+  static float pid_old[3];          // P, I, D before tuning: unchanged after M303 = it failed
 
   // Temperature curve: one sample a second while tuning
   #define PID_HIST 148
@@ -696,8 +699,20 @@ namespace qqs {
     return _MIN(atoi(d) + 1, 8);
   }
 
+  static void pid_get(const bool bed, float o[3]) {
+    o[0] = o[1] = o[2] = 0;
+    #if ENABLED(PIDTEMPBED)
+      if (bed) { const auto &p = thermalManager.temp_bed.pid; o[0] = p.p(); o[1] = p.i(); o[2] = p.d(); return; }
+    #endif
+    #if ENABLED(PIDTEMP)
+      if (!bed) { const auto &p = thermalManager.temp_hotend[0].pid; o[0] = p.p(); o[1] = p.i(); o[2] = p.d(); }
+    #endif
+  }
+
   static void pid_start(const bool bed) {
     if (job_active() || pid_busy()) return;
+    pid_get(bed, pid_old);
+    pid_stopped = false; pid_ask = false;
     if (!run(bed ? "M303 E-1 S60 C8 U1" : "M303 E0 S220 C8 U1")) return;
     pid_state = bed ? 2 : 1; pid_bed_last = bed;
     pid_ms = millis();
@@ -707,7 +722,9 @@ namespace qqs {
   }
   static void pid_hot() { pid_start(false); }
   static void pid_bed() { pid_start(true); }
-  static void pid_stop() { wait_for_heatup = false; ui.set_status("已停止調校"); redraw(); }
+  static void pid_stop() { wait_for_heatup = false; pid_stopped = true; ui.set_status("已停止調校"); redraw(); }
+  static void pid_ask_save() { pid_ask = false; save_feedback(run("M500")); }
+  static void pid_ask_no()   { pid_ask = false; ui.set_status("沒存檔：重開機後回到舊值"); redraw(); }
 
   // Right of the picture. Tuning: temperature, heater output, cycle, curve. Otherwise: the PID values.
   static void pid_panel() {
@@ -765,6 +782,8 @@ namespace qqs {
     save_feedback_poll();
     if (pid_busy() && ELAPSED(millis(), pid_ms + 2000) && queue_idle()) {
       pid_state = 3;
+      float now[3]; pid_get(pid_bed_last, now);
+      pid_ask = !pid_stopped && (now[0] != pid_old[0] || now[1] != pid_old[1] || now[2] != pid_old[2]);
       #if HAS_BUZZER
         BUZZ(200, 2000);
       #endif
@@ -792,12 +811,21 @@ namespace qqs {
       Btn h; h.icon = &qqs_i28_temperature; h.label = "噴頭 220°"; h.enabled = !job_active(); button(4, 176, 154, 60, h, pid_hot);
       Btn d; d.icon = &qqs_i28_bed; d.label = "熱床 60°"; d.enabled = !job_active(); button(162, 176, 154, 60, d, pid_bed);
     }
+
+    if (pid_ask) {   // tuning finished with new values: ask in the middle of the screen
+      float n[3]; pid_get(pid_bed_last, n);
+      char v[48], a[16], b[16], c[16];
+      sprintf_P(v, PSTR("P %s　I %s　D %s"), f2(a, n[0]), f2(b, n[1]), f2(c, n[2]));   // drawn with F_S
+      Btn no; no.label = "先不存";
+      Btn yes; yes.icon = &qqs_i28_device_floppy; yes.label = "存檔"; yes.fg = C_ACCENT; yes.border = C_ACCENT;
+      ask_box(pid_bed_last ? "熱床 PID 調校完成" : "噴頭 PID 調校完成", v, "新值已套用，要存檔嗎？", no, pid_ask_no, yes, pid_ask_save);
+    }
   }
 
   // From tft_idle: picture every 125 ms; while tuning, a temperature sample + the panel once a second
   void pid_anim_idle() {
     static millis_t next_ms = 0, sec_ms = 0;
-    if (ui.currentScreen != pid_screen || !pidan.a || !tft.queue.is_empty()) return;
+    if (ui.currentScreen != pid_screen || !pidan.a || pid_ask || !tft.queue.is_empty()) return;
     const millis_t now = millis();
     const bool busy = pid_busy();
     if (busy && ELAPSED(now, sec_ms)) {

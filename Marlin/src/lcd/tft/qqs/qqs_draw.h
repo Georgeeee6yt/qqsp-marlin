@@ -58,7 +58,9 @@ namespace qqs {
 
   // Common chrome
   void top_bar();                                        // status text + Wi-Fi IP, y 0..21
-  void header(const char *title, screenFunc_t back);     // back button + title, y 0..31
+  void header(const char *title, screenFunc_t back);     // back button (none if back is null) + title, y 0..31
+  // Centred question box over the current screen (clears the touch controls first: modal)
+  void ask_box(const char *title, const char *l1, const char *l2, const Btn &no, screenFunc_t no_cb, const Btn &yes, screenFunc_t yes_cb);
   constexpr int16_t TOP_H = 22, HEADER_H = 32;
 
   // Number formatting helpers (static buffers, use immediately)

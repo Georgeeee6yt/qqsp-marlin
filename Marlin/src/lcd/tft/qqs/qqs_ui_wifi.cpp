@@ -726,10 +726,7 @@ namespace qqs {
 
     static const char * const title[4] = { "備份模組", "寫回備份", "更新韌體", "更新網頁" };
     touch.clear();
-    header(title[espf.op], espf.running ? nullptr : go_fwm);
-    if (espf.running) {                    // no way out while the module is in its bootloader
-      canvas(0, 0, 84, HEADER_H - 1, C_BAR);
-    }
+    header(title[espf.op], espf.running ? nullptr : go_fwm);   // no way out while the module is in its bootloader
 
     // stage list (left)
     canvas(0, HEADER_H, 128, 144, C_BG);
