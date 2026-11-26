@@ -248,16 +248,24 @@ void qqs_carriage_move(const float d[3], const feedRate_t fr_mm_s) {
 }
 
 // Every tower up to its own switch, the ones still free moving together. False if one never got there.
+// A tower counts as there when its endstop stopped a move (the hit flag) or its switch reads pressed: a worn
+// switch may chatter once the carriage stands on it, and must not make that tower go round again.
 static bool qqs_towers_to_switches(const float dist, const feedRate_t fr_mm_s) {
+  static const EndstopEnum es[3] = { X_MAX, Y_MAX, Z_MAX };
+  bool done[3];
+  LOOP_ABC(i) done[i] = qqs_tower_at_switch(i);
   LOOP_L_N(pass, 3) {
     float d[3];
     bool any = false;
-    LOOP_ABC(i) { d[i] = qqs_tower_at_switch(i) ? 0 : dist; any |= d[i] != 0; }
+    LOOP_ABC(i) { d[i] = done[i] ? 0 : dist; any |= !done[i]; }
     if (!any) break;
+    endstops.hit_on_purpose();
     qqs_carriage_move(d, fr_mm_s);
+    const auto hit = endstops.trigger_state();
+    LOOP_ABC(i) if (TEST(hit, es[i]) || qqs_tower_at_switch(i)) done[i] = true;
     endstops.hit_on_purpose();
   }
-  LOOP_ABC(i) if (!qqs_tower_at_switch(i)) return false;
+  LOOP_ABC(i) if (!done[i]) return false;
   return true;
 }
 
