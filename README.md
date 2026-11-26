@@ -2,7 +2,7 @@
 
 給 **FLSUN QQ-S Pro**（Delta，HiSpeed 主板，STM32F103VE）用的 Marlin 2.1.2.1 韌體，有全中文觸控介面，原廠的 MKS Wi-Fi 模組也可以照常使用。
 
-目前版本 **v3.2.18**。各版本跟 commit 的對照請看 [`VERSIONS.md`](VERSIONS.md)。
+目前版本 **v3.2.19**。各版本跟 commit 的對照請看 [`VERSIONS.md`](VERSIONS.md)。
 
 > ⚠️ 這是個人改機用的韌體，只在一台機器上用過，而且只出 **BMG 擠出機**版本（E 反向、415 步/mm）。刷之前先用 `M503` 把原本的設定記下來。
 
