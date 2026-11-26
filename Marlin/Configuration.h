@@ -141,7 +141,7 @@
 
 // QQS-Pro v3: own Traditional Chinese touch UI (Marlin/src/lcd/tft/qqs, assets from qqs_tools/gen_assets.py)
 #define QQS_UI
-#define QQS_FW_VERSION "v3.2.15"
+#define QQS_FW_VERSION "v3.2.16"
 #define QQS_PERF                  // v3.2.9: M2011 performance counters (src/feature/qqs_perf.cpp)
 #define XPT2046_Z1_THRESHOLD 40   // touch pressure needed (default 10): ignore weak / noise "touches"
 #define COLOR_BACKGROUND   0x18C3   // #1A1A1A, matches the QQS UI (also used by the Marlin menus)
@@ -2116,7 +2116,7 @@
 #endif
 
 // Homing speeds (linear=mm/min, rotational=°/min)
-#define HOMING_FEEDRATE_MM_M { (45*60), (45*60), (45*60) } // QQS-Pro: stock 45 mm/s; 70 stalled a single tower (stealthChop TMC2208)
+#define HOMING_FEEDRATE_MM_M { (55*60), (55*60), (55*60) } // QQS-Pro: 45 -> 55 (v3.2.16, the stock firmware feels faster); 70 stalled a single tower (stealthChop TMC2208)
 
 // Validate that endstops are triggered on homing moves
 #define VALIDATE_HOMING_ENDSTOPS

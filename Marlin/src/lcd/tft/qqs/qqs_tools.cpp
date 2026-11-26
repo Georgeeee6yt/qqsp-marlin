@@ -218,7 +218,8 @@ void qqs_M2005() {
   planner.synchronize();
   gcode.process_subcommands_now(F("G28"));
 
-  constexpr feedRate_t fr_down = 20, fr_up = 4.5f;   // 4.5 = final homing approach (45 / bump divisor 10)
+  // The approach speed is G28's final one (homing feedrate / bump divisor): that is the repeatability G28 gets.
+  const feedRate_t fr_down = 20, fr_up = get_homing_bump_feedrate(Z_AXIS);
   endstops.enable(true);
   LOOP_ABC(t) {
     if (rep.abort) break;

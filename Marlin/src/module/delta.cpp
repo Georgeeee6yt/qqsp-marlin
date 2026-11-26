@@ -220,6 +220,68 @@ void forward_kinematics(const_float_t z1, const_float_t z2, const_float_t z3) {
  * A delta can only safely home all axes at the same time
  * This is like quick_home_xy() but for 3 towers.
  */
+#if ENABLED(QQS_UI)
+
+// QQS-Pro: tower homing like the stock FLSUN firmware. Marlin stops every tower at the first switch (an endstop
+// aborts the whole block) and then re-homes the towers one at a time, so the effector swings from side to side.
+// Here the towers still short of their switch carry on together until they are all there, once fast, then
+// (after backing off all three together) once slowly.
+
+static bool qqs_tower_at_switch(const uint8_t i) {
+  switch (i) {
+    case 0:  return READ(X_MAX_PIN) != X_MAX_ENDSTOP_INVERTING;
+    case 1:  return READ(Y_MAX_PIN) != Y_MAX_ENDSTOP_INVERTING;
+    default: return READ(Z_MAX_PIN) != Z_MAX_ENDSTOP_INVERTING;
+  }
+}
+
+// Move the carriages by d (mm, + = up) in one block; an endstop of a moving tower stops all of them.
+void qqs_carriage_move(const float d[3], const feedRate_t fr_mm_s) {
+  abce_pos_t t = planner.get_axis_positions_mm();   // where the steppers really are (also after an abort)
+  planner.set_machine_position_mm(t);
+  LOOP_ABC(i) t[i] += d[i];
+  #if HAS_DIST_MM_ARG
+    const xyze_float_t cart_dist_mm{0};
+  #endif
+  planner.buffer_segment(t OPTARG(HAS_DIST_MM_ARG, cart_dist_mm), fr_mm_s, active_extruder);
+  planner.synchronize();
+}
+
+// Every tower up to its own switch, the ones still free moving together. False if one never got there.
+static bool qqs_towers_to_switches(const float dist, const feedRate_t fr_mm_s) {
+  LOOP_L_N(pass, 3) {
+    float d[3];
+    bool any = false;
+    LOOP_ABC(i) { d[i] = qqs_tower_at_switch(i) ? 0 : dist; any |= d[i] != 0; }
+    if (!any) break;
+    qqs_carriage_move(d, fr_mm_s);
+    endstops.hit_on_purpose();
+  }
+  LOOP_ABC(i) if (!qqs_tower_at_switch(i)) return false;
+  return true;
+}
+
+static void qqs_home_towers() {
+  const float far = 1.5f * (delta_height + 10);
+  if (!qqs_towers_to_switches(far, homing_feedrate(Z_AXIS))) { kill(GET_TEXT_F(MSG_KILL_HOMING_FAILED)); return; }
+  constexpr xyz_float_t bump = HOMING_BUMP_MM;
+  const feedRate_t slow = get_homing_bump_feedrate(Z_AXIS);
+  const float back[3] = { -bump.z, -bump.z, -bump.z };
+  qqs_carriage_move(back, homing_feedrate(Z_AXIS));
+  if (!qqs_towers_to_switches(bump.z * 2, slow)) { kill(GET_TEXT_F(MSG_KILL_HOMING_FAILED)); return; }
+  // M666: each tower ends that far below its switch (Marlin does it per tower in homeaxis)
+  float adj[3];
+  bool any = false;
+  LOOP_ABC(i) {
+    const float a = delta_endstop_adj[i], mind = (MIN_STEPS_PER_SEGMENT) * planner.mm_per_step[i];
+    adj[i] = (a * (Z_HOME_DIR) < 0 && ABS(a) > mind) ? a : 0;
+    any |= adj[i] != 0;
+  }
+  if (any) qqs_carriage_move(adj, slow);
+}
+
+#endif // QQS_UI
+
 void home_delta() {
   DEBUG_SECTION(log_home_delta, "home_delta", DEBUGGING(LEVELING));
 
@@ -244,11 +306,15 @@ void home_delta() {
     #endif
   #endif
 
+  #if ENABLED(QQS_UI)
+    qqs_home_towers();
+  #else
   // Move all carriages together linearly until an endstop is hit.
   current_position.z = DIFF_TERN(HAS_BED_PROBE, delta_height + 10, probe.offset.z);
   line_to_current_position(homing_feedrate(Z_AXIS));
   planner.synchronize();
   TERN_(HAS_DELTA_SENSORLESS_PROBING, endstops.report_states());
+  #endif
 
   // Re-enable stealthChop if used. Disable diag1 pin on driver.
   #if ENABLED(SENSORLESS_HOMING) && DISABLED(ENDSTOPS_ALWAYS_ON_DEFAULT)
@@ -266,6 +332,7 @@ void home_delta() {
     #endif
   #endif
 
+  #if DISABLED(QQS_UI)
   endstops.validate_homing_move();
 
   // At least one carriage has reached the top.
@@ -273,6 +340,7 @@ void home_delta() {
   homeaxis(A_AXIS);
   homeaxis(B_AXIS);
   homeaxis(C_AXIS);
+  #endif
 
   // Set all carriages to their home positions
   // Do this here all at once for Delta, because

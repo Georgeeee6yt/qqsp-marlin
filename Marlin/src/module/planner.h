@@ -841,6 +841,7 @@ class Planner {
 
       // Allow do_homing_move to access internal functions, such as buffer_segment.
       friend void do_homing_move(const AxisEnum, const float, const feedRate_t, const bool);
+      friend void qqs_carriage_move(const float[3], const feedRate_t);   // QQS-Pro delta homing (delta.cpp)
   #endif
 
     /**
