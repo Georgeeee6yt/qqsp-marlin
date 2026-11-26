@@ -52,6 +52,7 @@ namespace qqs {
   // The probe goes on a cold nozzle only (George's probe sits over the nozzle and against the heater block):
   // above this the probe tap is not taken, the start buttons stay locked and the hotend may not heat.
   #define PROBE_MAX_NOZZLE 50
+  #define GATE_N 5                       // probes of the gate (qqs_tools.cpp GATE_PROBES)
   static bool nozzle_cool() { return thermalManager.degHotend(0) < PROBE_MAX_NOZZLE; }
   static bool cool_fan = false;          // the part fan was turned on here to cool the nozzle
   // Cooling on entry: hotend off, part fan full until cool. True when the cool / hot state changed.
@@ -86,11 +87,11 @@ namespace qqs {
     prb_last = now;
     return true;
   }
-  static bool can_start() { return qqs_settings.probe_installed && prb_seen && nozzle_cool() && !job_active() && !pj.running; }
+  // Since v3.2.18 every job asks for the probe itself (the gate in M2007): no tap on the hub needed.
+  static bool can_start() { return qqs_settings.probe_installed && nozzle_cool() && !job_active() && !pj.running; }
 
   static void job_start(const char kind, const char *cmd) {
-    // 'A' waits for the probe tap itself: no prior check needed
-    if (kind == 'A' ? !(qqs_settings.probe_installed && nozzle_cool() && !job_active() && !pj.running) : !can_start()) return;
+    if (!can_start()) return;
     pj.done = false; pj.kind = kind;
     if (!run(cmd)) return;
     job_ms = millis();
@@ -103,6 +104,7 @@ namespace qqs {
   // =========================================================================
 
   static void ph_paper_screen();
+  static void gate_fail_screen();
   static void rp_result_screen();
   static void dc_result_screen();
   static void ph_fail_screen();
@@ -122,6 +124,8 @@ namespace qqs {
   static void job_noback() { ui.set_status("量測中不能離開"); redraw(); }
 
   static void au_cancel() { pj.abort = true; ui.set_status("取消中…"); }
+  static void gate_go()   { pj.answer = 1; }
+  static void gate_stop() { pj.answer = 2; }
 
   // ---- Picture layout while measuring: animation left, map / stages / time right, text below ----
   constexpr int16_t JA_Y = HEADER_H + 4,          // animation and right panel (160 x 120 each)
@@ -134,7 +138,7 @@ namespace qqs {
   static int8_t pa_seq = -1;                      // position in the sight sequence, -1 = idle
   static uint8_t pa_tick = 0;
 
-  static bool job_pic() { return pj.kind != 'A' || (pj.stage != ProbeJob::AS_WAIT && pj.stage != ProbeJob::AS_COUNT); }
+  static bool job_pic() { return pj.stage != ProbeJob::AS_WAIT && pj.stage != ProbeJob::AS_COUNT && pj.stage != ProbeJob::AS_ASK; }
   static bool job_mesh() { return mp.nx && (pj.kind == 'M' || (pj.kind == 'A' && pj.stage == ProbeJob::AS_G29)); }
 
   static void mmss(char *o, const uint32_t s) { sprintf_P(o, PSTR("%lu:%02lu"), (unsigned long)(s / 60) % 1000, (unsigned long)(s % 60)); }
@@ -147,9 +151,10 @@ namespace qqs {
       sprintf_P(v, PSTR("網格第 %u/%u 點"), k, mp.total);   // drawn with F_L
       return;
     }
+    if (pj.stage == ProbeJob::AS_HOME) { strcpy_P(v, PSTR("歸零、下降 20 mm…")); return; }   // drawn with F_L
+    if (pj.stage == ProbeJob::AS_CHECK) { sprintf_P(v, PSTR("確認探頭 第 %u/%u 次"), _MIN(pj.i + 1, GATE_N), GATE_N); return; }   // drawn with F_L
     if (pj.kind == 'A') {
       switch (pj.stage) {
-        case ProbeJob::AS_HOME: strcpy_P(v, PSTR("歸零、下降 20 mm…")); break;   // drawn with F_L
         case ProbeJob::AS_G33:
           if (!strncmp_P(m, PSTR("Iteration"), 9)) sprintf_P(v, PSTR("校準第 %d 輪"), atoi(m + 11));   // drawn with F_L
           else strcpy_P(v, PSTR("Delta 校準中…"));   // drawn with F_L
@@ -201,12 +206,12 @@ namespace qqs {
       return;
     }
     if (pj.kind == 'A') {
-      static const char * const st[] = { "歸零", "Delta 校準", "網格", "取下探頭" };   // drawn with F_M
-      const uint8_t k = pj.stage <= ProbeJob::AS_COUNT ? 0 : pj.stage - ProbeJob::AS_COUNT;   // 1 G33, 2 G29, 3 stow, 4 done
-      for (uint8_t i = 0; i < 4; i++) {
+      static const char * const st[] = { "歸零", "確認探頭", "Delta 校準", "網格", "取下探頭" };   // drawn with F_M
+      const uint8_t k = pj.stage <= ProbeJob::AS_COUNT ? 0 : pj.stage <= ProbeJob::AS_ASK ? 1 : pj.stage - ProbeJob::AS_ASK + 1;   // 2 G33, 3 G29, 4 stow, 5 done
+      for (uint8_t i = 0; i < 5; i++) {
         const uint16_t c = i < k ? C_OK : i == k ? C_ACCENT : C_DIM;
-        fill(14, 14 + i * 26 + 7, 6, 6, c);
-        text(28, 6 + i * 26 + 2, F_M, c, C_BG, st[i]);
+        fill(14, 8 + i * 22 + 7, 6, 6, c);
+        text(28, i * 22 + 2, F_M, c, C_BG, st[i]);
       }
       return;
     }
@@ -260,10 +265,12 @@ namespace qqs {
     static uint16_t sig = 0xFFFF;
     ui.defer_status_screen();
     {                                         // stage / countdown / map changes redraw at once
-      const uint16_t s = pj.kind == 'A' ? (uint16_t(pj.stage) << 8) | pj.count : 0;
+      const uint16_t s = (uint16_t(pj.stage) << 8) | pj.count;
       if (s != sig) { sig = s; redraw(); }
     }
     if (pj.done && !pj.running) {             // finished: go to its result
+      if (pj.gate == ProbeJob::GATE_FAIL) { ui.goto_screen(gate_fail_screen); return; }
+      if (pj.gate != ProbeJob::GATE_OK) { ui.set_status(pj.gate == ProbeJob::GATE_STOP ? "已停止" : "已取消"); go_probe(); return; }
       switch (pj.kind) {
         case 'P': if (pj.ok) { ph_z = 1.0f; ui.goto_screen(ph_paper_screen); } else ui.goto_screen(ph_fail_screen); return;
         case 'R': ui.goto_screen(rp_result_screen); return;
@@ -279,17 +286,25 @@ namespace qqs {
     canvas(0, HEADER_H, TFT_WIDTH, TFT_HEIGHT - HEADER_H, C_BG);
 
     char v[48];
-    if (!job_pic()) {                         // 'A': waiting for the tap / counting down
+    if (pj.stage == ProbeJob::AS_ASK) {       // the 5 probes spread 0.02 .. 0.04: go on or stop
+      char a[16], l1[56];
+      sprintf_P(l1, PSTR("量 %u 次範圍 %s mm（%s 以下最好）"), GATE_N, f3s(a, pj.chk) + 1, "0.020");   // drawn with F_S
+      Btn no; no.icon = &qqs_i18_x; no.label = "停止";
+      Btn yes; yes.icon = &qqs_i18_player_play; yes.label = "繼續"; yes.fg = C_ACCENT; yes.border = C_ACCENT;
+      ask_box("探頭一致性偏大", l1, "可能沒裝穩。要繼續嗎？", no, gate_stop, yes, gate_go);
+      return;
+    }
+    if (!job_pic()) {                         // waiting for the tap / counting down
       if (pj.stage == ProbeJob::AS_WAIT) {
         text_c(0, 24, TFT_WIDTH, F_L, C_ACCENT, C_BG, "請裝上探頭");
         text_c(0, 72, TFT_WIDTH, F_M, C_TEXT, C_BG, "裝好後用手按一下探頭");
-        text_c(0, 104, TFT_WIDTH, F_S, C_MUTED, C_BG, "按下後噴頭會往上 5 mm，再倒數 3 秒開始。");
+        text_c(0, 104, TFT_WIDTH, F_S, C_MUTED, C_BG, "按下後噴頭會往上 5 mm，再倒數 5 秒開始。");
       }
       else {
         sprintf_P(v, PSTR("%u"), pj.count);
         text_c(0, 10, TFT_WIDTH, F_XL, C_ACCENT, C_BG, v);
         text_c(0, 72, TFT_WIDTH, F_M, C_TEXT, C_BG, "手離開機器");
-        text_c(0, 104, TFT_WIDTH, F_S, C_MUTED, C_BG, "倒數完會歸零，接著自動校準和網格。");
+        text_c(0, 104, TFT_WIDTH, F_S, C_MUTED, C_BG, pj.kind == 'R' ? "倒數完開始在中心連量。" : "倒數完先在中心量 5 次，確認探頭裝穩。");
       }
       Btn c; c.icon = &qqs_i18_x; c.label = pj.abort ? "取消中…" : "取消"; c.enabled = !pj.abort;
       button(4, 180, 312, 56, c, au_cancel);
@@ -301,7 +316,25 @@ namespace qqs {
     job_panel(false);
     job_lines();
     canvas(0, JH_Y, TFT_WIDTH, TFT_HEIGHT - JH_Y, C_BG);
-    text_c(0, 0, TFT_WIDTH, F_S, C_DIM, C_BG, pj.kind == 'A' ? "探頭保持裝著，量完才請你取下。" : "出現提示時照做，按「繼續」會回到這裡。");
+    text_c(0, 0, TFT_WIDTH, F_S, C_DIM, C_BG, "探頭保持裝著，量完才請你取下。");
+  }
+
+  // The 5 probes at the centre spread more than 0.04 (or a probe failed): stopped, homed
+  static void gate_fail_screen() {
+    static millis_t next_ms = 0;
+    ui.defer_status_screen();
+    if (!live(next_ms, 60000)) return;
+    touch.clear();
+    header(job_title(), go_probe);
+    canvas(0, HEADER_H, TFT_WIDTH, 146, C_BG);
+    char v[56], a[16];
+    text_c(0, 14, TFT_WIDTH, F_M, C_HOT, C_BG, "調平異常");
+    text_c(0, 50, TFT_WIDTH, F_S, C_TEXT, C_BG, "請檢查開關或重新安裝探頭。");
+    if (isnan(pj.chk)) strcpy_P(v, PSTR("探頭在中心沒有觸發。"));
+    else sprintf_P(v, PSTR("量 %u 次範圍 %s mm（超過 %s）"), GATE_N, f3s(a, pj.chk) + 1, "0.040");   // drawn with F_S
+    text_c(0, 74, TFT_WIDTH, F_S, C_MUTED, C_BG, v);
+    text_c(0, 100, TFT_WIDTH, F_S, C_DIM, C_BG, "已經歸零。取下探頭，裝好後再試一次。");
+    Btn b; b.icon = &qqs_i18_chevron_left; b.label = "返回"; button(4, 180, 312, 56, b, go_probe);
   }
 
   // =========================================================================
@@ -337,7 +370,7 @@ namespace qqs {
     text(10, 4, F_M, C_TEXT, C_BG, "探頭");
     text(60, 4, F_M, now ? C_OK : C_MUTED, C_BG, now ? "已觸發" : "未觸發");
     if (!nozzle_cool()) hot_line(30);
-    else text(10, 30, F_S, prb_seen ? C_OK : C_WARN, C_BG, prb_seen ? "探頭有反應，可以開始。" : "裝上探頭，用手按一下，確認有反應。");
+    else text(10, 30, F_S, C_TEXT, C_BG, "選一項開始：會歸零後請你裝上探頭。");
     sprintf_P(v, PSTR("探頭高度（M851 Z）　%s"), f2(a, probe.offset.z));
     text(10, 50, F_S, C_MUTED, C_BG, v);
     if (pj.done && pj.ok && pj.kind == 'R') {
@@ -388,8 +421,8 @@ namespace qqs {
     canvas(0, HEADER_H, TFT_WIDTH, 146, C_BG);
     char v[48], a[16];
     text(10, 4,  F_S, C_WARN, C_BG, "先做過手動校準：中心的 Z0 要準。");
-    text(10, 26, F_S, C_TEXT, C_BG, "1. 按「開始」：歸零，用探頭量中心。");
-    text(10, 44, F_S, C_TEXT, C_BG, "2. 提示「請取下探頭」時取下。");
+    text(10, 26, F_S, C_TEXT, C_BG, "1. 按「開始」：歸零後請裝上探頭、按一下。");
+    text(10, 44, F_S, C_TEXT, C_BG, "2. 量 5 次確認探頭裝穩，再量中心；取下探頭。");
     text(10, 62, F_S, C_TEXT, C_BG, "3. 噴嘴停在中心上方 1 mm，");
     text(10, 80, F_S, C_TEXT, C_BG, "    用紙片調到拉紙有一點阻力，按「好了」。");
     sprintf_P(v, PSTR("目前 M851 Z　%s"), f2(a, probe.offset.z));
@@ -541,7 +574,7 @@ namespace qqs {
     char v[48], a[16], b[16];
     text(10, 4,  F_S, C_TEXT, C_BG, "用探頭量多點，自動算 H、三塔、半徑、塔角。");
     text(10, 22, F_S, C_TEXT, C_BG, "第一層偏移會保留。先做好「探頭高度」。");
-    text(10, 40, F_S, C_MUTED, C_BG, "大約 5～15 分鐘，量的時候不要碰機器。");
+    text(10, 40, F_S, C_MUTED, C_BG, "開始後歸零、請你裝探頭，量 5 次確認裝穩。");
     sprintf_P(v, PSTR("目前 H %s　R %s"), f2(a, delta_height), f2(b, delta_radius));
     text(10, 66, F_S, C_DIM, C_BG, v);
     Btn p3; p3.label = "7 點"; p3.sub = "中心、三塔、對面"; if (dc_points == 3) { p3.fg = C_ACCENT; p3.border = C_ACCENT; }
@@ -612,7 +645,7 @@ namespace qqs {
     header("一鍵校準＋網格", go_probe);
     canvas(0, HEADER_H, TFT_WIDTH, 92, C_BG);
     text(10, 4,  F_S, C_TEXT, C_BG, "1. 歸零後下降 20 mm，請裝上探頭，按一下探頭。");
-    text(10, 22, F_S, C_TEXT, C_BG, "2. 噴頭往上 5 mm，倒數 3 秒：手離開。");
+    text(10, 22, F_S, C_TEXT, C_BG, "2. 往上 5 mm，倒數 5 秒手離開；量 5 次確認裝穩。");
     text(10, 40, F_S, C_TEXT, C_BG, "3. 歸零、Delta 校準、網格，探頭全程裝著。");
     text(10, 58, F_S, C_TEXT, C_BG, "4. 量完請取下探頭，再決定存不存。");
     if (!nozzle_cool()) hot_line(76);
@@ -721,7 +754,7 @@ namespace qqs {
 
     const bool en = can_start();
     Btn b; b.icon = &qqs_i18_grid_dots; b.label = "建立網格"; b.enabled = en;
-    if (!en && !pj.running) { b.icon = nullptr; b.sub = !qqs_settings.probe_installed ? "沒有設定探頭" : !nozzle_cool() ? "噴嘴降溫中" : "先按一下探頭"; }
+    if (!en && !pj.running) { b.icon = nullptr; b.sub = !qqs_settings.probe_installed ? "沒有設定探頭" : "噴嘴降溫中"; }
     button(4, 186, 101, 50, b, me_build);
     Btn t; t.icon = &qqs_i18_toggle_right; t.label = planner.leveling_active ? "關閉網格" : "使用網格"; t.enabled = bedlevel.has_mesh() && !job_active();
     button(110, 186, 101, 50, t, me_toggle);

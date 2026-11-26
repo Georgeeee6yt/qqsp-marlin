@@ -71,10 +71,16 @@ namespace qqs {
     // 'C': values before (actual frame) and after, for the result page and M2007 U
     float oldH, oldR, old_adj[3], old_ang[3], newH, newR, new_adj[3], new_ang[3];
     bool had_mesh;
-    // 'A': stage for the UI, countdown, cancel request, results of the two parts
-    enum : uint8_t { AS_HOME, AS_WAIT, AS_COUNT, AS_G33, AS_G29, AS_STOW, AS_DONE } ;
+    // Every probe job starts with the probe gate (v3.2.18): home, the probe goes on, a tap, up 5 mm, 5 s
+    // countdown, 5 probes at the centre (range <= 0.02 go, <= 0.04 ask, more: stop). Then the work:
+    // 'A' G33 + G29, the others AS_WORK. Stage for the UI, countdown, cancel request, results of the parts.
+    enum : uint8_t { AS_HOME, AS_WAIT, AS_COUNT, AS_CHECK, AS_ASK, AS_G33, AS_G29, AS_STOW, AS_DONE, AS_WORK } ;
     volatile uint8_t stage, count;
     volatile bool abort;
+    volatile int8_t answer;               // AS_ASK: 0 waiting, 1 go on, 2 stop
+    float chk;                            // gate: range of the 5 probes (mm), NAN if a probe failed
+    enum : uint8_t { GATE_OK, GATE_CANCEL, GATE_STOP, GATE_FAIL } ;
+    uint8_t gate;
     bool g33_ok, mesh_ok;                // 'C': a mesh existed before (G33 clears it: it no longer fits the new geometry)
     char sd[12];                  // 'C': "0.012" from G33's status line, "" if it did not finish
   };

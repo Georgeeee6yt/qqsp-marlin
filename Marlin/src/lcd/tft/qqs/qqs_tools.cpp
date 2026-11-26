@@ -397,29 +397,109 @@ static void tap_lift() {
   planner.refresh_acceleration_rates();
 }
 
+// The probe gate (George, v3.2.18): the probe is put on by hand, so first make sure it sits right.
+// Home, centre, down 20 mm; wait for a tap on the probe; up 5 mm; 5 s countdown; then (check) probe the
+// centre 5 times: range <= 0.02 go on, <= 0.04 ask, more (or a probe failure) stop.
+// GATE_OK leaves the probe "held" (no deploy / stow prompts) for the work that follows.
+#define GATE_PROBES 5
+#define GATE_GOOD   0.02f
+#define GATE_MAX    0.04f
+static uint8_t probe_gate(const bool check) {
+  pj.abort = false; pj.chk = NAN; pj.answer = 0;
+  pj.stage = ProbeJob::AS_HOME;
+  gcode.process_subcommands_now(F("G28"));
+  do_blocking_move_to_xy(0, 0, 80);
+  do_blocking_move_to_z(current_position.z - 20, 20);
+  pj.stage = ProbeJob::AS_WAIT;
+  if (!wait_probe_tap()) return ProbeJob::GATE_CANCEL;
+  tap_lift();
+  TERN_(HAS_BUZZER, BUZZ(50, 2400));
+  pj.stage = ProbeJob::AS_COUNT;
+  for (uint8_t c = 5; c && !pj.abort; c--) {
+    pj.count = c;
+    const millis_t end = millis() + 1000;
+    while (PENDING(millis(), end) && !pj.abort) idle();
+  }
+  if (pj.abort) return ProbeJob::GATE_CANCEL;
+  qqs_probe_hold = true;                      // the probe is on: no deploy / stow prompts until the end
+  endstops.enable_z_probe(true);
+  if (!check) return ProbeJob::GATE_OK;
+
+  pj.stage = ProbeJob::AS_CHECK;
+  pj.n = GATE_PROBES; pj.i = 0;
+  float lo = 999, hi = -999;
+  for (uint8_t k = 0; k < GATE_PROBES; k++) {
+    const float z = probe.probe_at_point(0, 0, PROBE_PT_RAISE, 0, true, false);
+    if (isnan(z)) return ProbeJob::GATE_FAIL;
+    pj.z[k] = z; pj.i = k + 1;
+    NOMORE(lo, z); NOLESS(hi, z);
+    if (pj.abort) return ProbeJob::GATE_CANCEL;
+  }
+  pj.chk = hi - lo;
+  if (pj.chk > GATE_MAX) return ProbeJob::GATE_FAIL;
+  if (pj.chk > GATE_GOOD) {                   // ask: go on or stop
+    pj.answer = 0;
+    pj.stage = ProbeJob::AS_ASK;
+    KEEPALIVE_STATE(PAUSED_FOR_USER);
+    while (!pj.answer && !pj.abort) idle();
+    if (pj.answer != 1) return ProbeJob::GATE_STOP;
+  }
+  return ProbeJob::GATE_OK;
+}
+
+// After a gate that did not pass: let go of the probe, home, end the job (no "take it off" prompt: on a
+// failed check it is to be put on again anyway).
+static void gate_end(const uint8_t g) {
+  qqs_probe_hold = false;
+  endstops.enable_z_probe(false);
+  pj.gate = g;
+  pj.stage = ProbeJob::AS_DONE;
+  gcode.process_subcommands_now(F("G28"));
+  pj_end(false);
+}
+
+// The work is done: the probe comes off (prompt), home.
+static void probe_off() {
+  qqs_probe_hold = false;
+  endstops.enable_z_probe(true);              // so stow() really asks to take it off
+  pj.stage = ProbeJob::AS_STOW;
+  probe.stow();
+}
+
 void qqs_M2007() {
   planner.synchronize();
+  pj.gate = ProbeJob::GATE_OK;
 
   if (parser.seen('R')) {                       // repeatability at the centre
+    const uint8_t n = constrain(parser.value_byte() ?: 10, 2, PRB_MAX);
     pj_begin('R');
-    pj.n = constrain(parser.value_byte() ?: 10, 2, PRB_MAX);
-    pj.i = 0;
-    if (!all_axes_homed()) gcode.process_subcommands_now(F("G28"));
+    const uint8_t g = probe_gate(false);        // this IS the check: no 5-probe gate before it
+    if (g != ProbeJob::GATE_OK) { gate_end(g); return; }
+    pj.stage = ProbeJob::AS_WORK;
+    pj.n = n; pj.i = 0;
     bool ok = true;
-    for (uint8_t k = 0; k < pj.n; k++) {
-      const float z = probe.probe_at_point(0, 0, k + 1 < pj.n ? PROBE_PT_RAISE : PROBE_PT_STOW, 0, true, false);
-      if (isnan(z)) { ok = false; probe.stow(); break; }
+    for (uint8_t k = 0; k < pj.n && !pj.abort; k++) {
+      const float z = probe.probe_at_point(0, 0, PROBE_PT_RAISE, 0, true, false);
+      if (isnan(z)) { ok = false; break; }
       pj.z[k] = z; pj.i = k + 1;
     }
-    pj_end(ok);
+    probe_off();
+    gcode.process_subcommands_now(F("G28"));
+    pj.stage = ProbeJob::AS_DONE;
+    pj_end(ok && pj.i == pj.n);
     return;
   }
 
   if (parser.seen_test('H')) {                  // probe height, step 1 (H: 'P' is the G33 points of C / A)
     pj_begin('P');
+    const uint8_t g = probe_gate(true);
+    if (g != ProbeJob::GATE_OK) { gate_end(g); return; }
+    pj.stage = ProbeJob::AS_WORK;
     cal_frame(true);
     gcode.process_subcommands_now(F("G28"));
-    pj.measured = probe.probe_at_point(0, 0, PROBE_PT_STOW, 0, true, false);
+    pj.measured = probe.probe_at_point(0, 0, PROBE_PT_RAISE, 0, true, false);
+    probe_off();
+    pj.stage = ProbeJob::AS_WORK;
     const bool ok = !isnan(pj.measured);
     if (ok) {
       do_blocking_move_to_z(_MAX(current_position.z, 5.0f), 10);
@@ -431,9 +511,15 @@ void qqs_M2007() {
   }
 
   if (parser.seen_test('C')) {                  // delta auto calibration
+    const uint8_t pts = parser.byteval('P', 3);
     pj_begin('C');
-    const bool ok = do_g33(parser.byteval('P', 3));
+    const uint8_t g = probe_gate(true);
+    if (g != ProbeJob::GATE_OK) { gate_end(g); return; }
+    pj.stage = ProbeJob::AS_WORK;
+    const bool ok = do_g33(pts);
+    probe_off();
     gcode.process_subcommands_now(F("G28"));
+    pj.stage = ProbeJob::AS_DONE;
     pj_end(ok);
     return;
   }
@@ -446,36 +532,25 @@ void qqs_M2007() {
 
   if (parser.seen_test('M')) {                  // bilinear mesh
     pj_begin('M');
+    const uint8_t g = probe_gate(true);
+    if (g != ProbeJob::GATE_OK) { gate_end(g); return; }
+    pj.stage = ProbeJob::AS_WORK;
     const bool ok = do_g29();
+    probe_off();
     gcode.process_subcommands_now(F("G28"));     // leveling stays on (RESTORE_LEVELING_AFTER_G28)
+    pj.stage = ProbeJob::AS_DONE;
     pj_end(ok);
     return;
   }
 
   if (parser.seen_test('A')) {                  // one go: tap the probe, G33, G29
     pj_begin('A');
-    pj.abort = false; pj.g33_ok = pj.mesh_ok = false;
+    pj.g33_ok = pj.mesh_ok = false;
     const uint8_t pts = parser.byteval('P', 3);
-    pj.stage = ProbeJob::AS_HOME;
-    gcode.process_subcommands_now(F("G28"));
-    do_blocking_move_to_xy(0, 0, 80);
-    do_blocking_move_to_z(current_position.z - 20, 20);
-    pj.stage = ProbeJob::AS_WAIT;
-    bool go = wait_probe_tap();
-    if (go) {
-      tap_lift();
-      TERN_(HAS_BUZZER, BUZZ(50, 2400));
-      pj.stage = ProbeJob::AS_COUNT;
-      for (uint8_t c = 3; c && !pj.abort; c--) {
-        pj.count = c;
-        const millis_t end = millis() + 1000;
-        while (PENDING(millis(), end) && !pj.abort) idle();
-      }
-      go = !pj.abort;
-    }
-    if (go) {
-      qqs_probe_hold = true;                    // the probe is on: no deploy / stow prompts until the end
-      endstops.enable_z_probe(true);
+    const uint8_t g = probe_gate(true);
+    if (g != ProbeJob::GATE_OK) { gate_end(g); return; }
+    const bool go = true;
+    {
       pj.stage = ProbeJob::AS_G33;
       gcode.process_subcommands_now(F("G28"));
       pj.g33_ok = do_g33(pts);
@@ -483,10 +558,7 @@ void qqs_M2007() {
         pj.stage = ProbeJob::AS_G29;
         pj.mesh_ok = do_g29();
       }
-      qqs_probe_hold = false;
-      endstops.enable_z_probe(true);            // so stow() below really asks to take it off
-      pj.stage = ProbeJob::AS_STOW;
-      probe.stow();
+      probe_off();
     }
     gcode.process_subcommands_now(F("G28"));
     pj.stage = ProbeJob::AS_DONE;
