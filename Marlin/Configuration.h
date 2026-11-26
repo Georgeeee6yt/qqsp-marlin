@@ -141,7 +141,7 @@
 
 // QQS-Pro v3: own Traditional Chinese touch UI (Marlin/src/lcd/tft/qqs, assets from qqs_tools/gen_assets.py)
 #define QQS_UI
-#define QQS_FW_VERSION "v3.2.16"
+#define QQS_FW_VERSION "v3.2.17"
 #define QQS_PERF                  // v3.2.9: M2011 performance counters (src/feature/qqs_perf.cpp)
 #define XPT2046_Z1_THRESHOLD 40   // touch pressure needed (default 10): ignore weak / noise "touches"
 #define COLOR_BACKGROUND   0x18C3   // #1A1A1A, matches the QQS UI (also used by the Marlin menus)
@@ -1583,7 +1583,7 @@
 #define Z_CLEARANCE_MULTI_PROBE     5 // Z Clearance between multiple probes
 //#define Z_AFTER_PROBING         100 // Z position after probing is done
 
-#define Z_PROBE_LOW_POINT          -4 // Farthest distance below the trigger-point to go before stopping
+#define Z_PROBE_LOW_POINT          -2 // QQS-Pro v3.2.17: -4 -> -2 (the probe absorbs 1.4 mm overtravel + 2 mm slide). Farthest distance below the trigger-point to go before stopping
 
 // For M851 give a range for adjusting the Z probe offset
 #define Z_PROBE_OFFSET_RANGE_MIN -25

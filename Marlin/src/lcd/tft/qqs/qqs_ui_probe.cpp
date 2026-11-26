@@ -20,6 +20,7 @@
 #include "../../../module/delta.h"
 #include "../../../feature/bedlevel/bedlevel.h"
 #include "../../../gcode/queue.h"
+#include "../../../module/temperature.h"
 
 namespace qqs {
 
@@ -48,6 +49,31 @@ namespace qqs {
     return o;
   }
 
+  // The probe goes on a cold nozzle only (George's probe sits over the nozzle and against the heater block):
+  // above this the probe tap is not taken, the start buttons stay locked and the hotend may not heat.
+  #define PROBE_MAX_NOZZLE 50
+  static bool nozzle_cool() { return thermalManager.degHotend(0) < PROBE_MAX_NOZZLE; }
+  static bool cool_fan = false;          // the part fan was turned on here to cool the nozzle
+  // Cooling on entry: hotend off, part fan full until cool. True when the cool / hot state changed.
+  static bool cool_tick() {
+    static bool last = true;
+    const bool c = nozzle_cool();
+    if (c && cool_fan) { cool_fan = false; thermalManager.set_fan_speed(0, 0); }
+    if (c == last) return false;
+    last = c;
+    return true;
+  }
+  static void cool_start() {
+    thermalManager.setTargetHotend(0, 0);
+    if (!nozzle_cool()) { cool_fan = true; thermalManager.set_fan_speed(0, 255); }
+    cool_tick();
+  }
+  static void hot_line(const int16_t y) {   // nozzle temperature warning line on the hub and the intros
+    char v[56];
+    sprintf_P(v, PSTR("噴嘴 %d°C：降到 %d°C 以下才能裝探頭"), int(thermalManager.degHotend(0) + 0.5f), PROBE_MAX_NOZZLE);   // drawn with F_S
+    text(10, y, F_S, C_WARN, C_BG, v);
+  }
+
   static bool probe_now() { return PROBE_TRIGGERED(); }
   // Unlock on an untriggered -> triggered EDGE: a normally-closed probe that is not plugged in reads
   // "triggered" all the time and must not unlock anything. prb_last starts at the state found on entry.
@@ -56,15 +82,15 @@ namespace qqs {
     const bool now = qqs_settings.probe_installed && probe_now();
     if (prb_fresh) { prb_fresh = false; prb_last = now; return true; }
     if (now == prb_last) return false;
-    if (now) prb_seen = true;
+    if (now && nozzle_cool()) prb_seen = true;   // a tap on a hot nozzle does not count
     prb_last = now;
     return true;
   }
-  static bool can_start() { return qqs_settings.probe_installed && prb_seen && !job_active() && !pj.running; }
+  static bool can_start() { return qqs_settings.probe_installed && prb_seen && nozzle_cool() && !job_active() && !pj.running; }
 
   static void job_start(const char kind, const char *cmd) {
     // 'A' waits for the probe tap itself: no prior check needed
-    if (kind == 'A' ? !(qqs_settings.probe_installed && !job_active() && !pj.running) : !can_start()) return;
+    if (kind == 'A' ? !(qqs_settings.probe_installed && nozzle_cool() && !job_active() && !pj.running) : !can_start()) return;
     pj.done = false; pj.kind = kind;
     if (!run(cmd)) return;
     job_ms = millis();
@@ -290,7 +316,7 @@ namespace qqs {
   static void probe_screen() {
     static millis_t next_ms = 0;
     ui.defer_status_screen();
-    if (probe_poll()) redraw();
+    if (probe_poll() | cool_tick()) redraw();
     const bool now = prb_last;
     if (!live(next_ms, 2000)) return;
 
@@ -310,7 +336,8 @@ namespace qqs {
 
     text(10, 4, F_M, C_TEXT, C_BG, "探頭");
     text(60, 4, F_M, now ? C_OK : C_MUTED, C_BG, now ? "已觸發" : "未觸發");
-    text(10, 30, F_S, prb_seen ? C_OK : C_WARN, C_BG, prb_seen ? "探頭有反應，可以開始。" : "裝上探頭，用手按一下，確認有反應。");
+    if (!nozzle_cool()) hot_line(30);
+    else text(10, 30, F_S, prb_seen ? C_OK : C_WARN, C_BG, prb_seen ? "探頭有反應，可以開始。" : "裝上探頭，用手按一下，確認有反應。");
     sprintf_P(v, PSTR("探頭高度（M851 Z）　%s"), f2(a, probe.offset.z));
     text(10, 50, F_S, C_MUTED, C_BG, v);
     if (pj.done && pj.ok && pj.kind == 'R') {
@@ -332,7 +359,7 @@ namespace qqs {
     Btn d; d.icon = &qqs_i18_target; d.label = "Delta 校準"; d.enabled = en;
     button(216, 126, 100, 52, d, go_dcal);
     Btn au; au.icon = &qqs_i18_player_play; au.label = "一鍵校準＋網格"; au.fg = C_ACCENT; au.border = C_ACCENT;
-    au.enabled = !job_active() && !pj.running;
+    au.enabled = nozzle_cool() && !job_active() && !pj.running;
     button(4, 184, 207, 52, au, go_auto);
     Btn m; m.icon = &qqs_i18_grid_dots; m.label = "自動網格";
     button(216, 184, 100, 52, m, go_mesh);
@@ -341,6 +368,7 @@ namespace qqs {
   void go_probe() {
     if (job_active()) { ui.set_status("列印中不能校準"); redraw(); return; }
     prb_seen = false; prb_fresh = true;
+    cool_start();
     ui.goto_screen(probe_screen);
   }
 
@@ -353,7 +381,8 @@ namespace qqs {
   static void ph_intro_screen() {
     static millis_t next_ms = 0;
     ui.defer_status_screen();
-    if (!live(next_ms, 60000)) return;
+    if (cool_tick()) redraw();
+    if (!live(next_ms, nozzle_cool() ? 60000 : 2000)) return;
     touch.clear();
     header("探頭高度", go_probe);
     canvas(0, HEADER_H, TFT_WIDTH, 146, C_BG);
@@ -365,6 +394,7 @@ namespace qqs {
     text(10, 80, F_S, C_TEXT, C_BG, "    用紙片調到拉紙有一點阻力，按「好了」。");
     sprintf_P(v, PSTR("目前 M851 Z　%s"), f2(a, probe.offset.z));
     text(10, 108, F_S, C_MUTED, C_BG, v);
+    if (!nozzle_cool()) hot_line(126);
     Btn s; s.icon = &qqs_i18_player_play; s.label = "開始"; s.fg = C_ACCENT; s.border = C_ACCENT; s.enabled = can_start();
     button(4, 182, 312, 54, s, ph_start);
   }
@@ -503,7 +533,8 @@ namespace qqs {
   static void dc_intro_screen() {
     static millis_t next_ms = 0;
     ui.defer_status_screen();
-    if (!live(next_ms, 60000)) return;
+    if (cool_tick()) redraw();
+    if (!live(next_ms, nozzle_cool() ? 60000 : 2000)) return;
     touch.clear();
     header("Delta 自動校準", go_probe);
     canvas(0, HEADER_H, TFT_WIDTH, 92, C_BG);
@@ -575,7 +606,8 @@ namespace qqs {
   static void au_intro_screen() {
     static millis_t next_ms = 0;
     ui.defer_status_screen();
-    if (!live(next_ms, 60000)) return;
+    if (cool_tick()) redraw();
+    if (!live(next_ms, nozzle_cool() ? 60000 : 2000)) return;
     touch.clear();
     header("一鍵校準＋網格", go_probe);
     canvas(0, HEADER_H, TFT_WIDTH, 92, C_BG);
@@ -583,13 +615,14 @@ namespace qqs {
     text(10, 22, F_S, C_TEXT, C_BG, "2. 噴頭往上 5 mm，倒數 3 秒：手離開。");
     text(10, 40, F_S, C_TEXT, C_BG, "3. 歸零、Delta 校準、網格，探頭全程裝著。");
     text(10, 58, F_S, C_TEXT, C_BG, "4. 量完請取下探頭，再決定存不存。");
-    text(10, 76, F_S, C_DIM, C_BG, "探頭高度要先量好。大約 15～25 分鐘。");
+    if (!nozzle_cool()) hot_line(76);
+    else text(10, 76, F_S, C_DIM, C_BG, "探頭高度要先量好。大約 15～25 分鐘。");
     Btn p3; p3.label = "7 點"; p3.sub = "中心、三塔、對面"; if (dc_points == 3) { p3.fg = C_ACCENT; p3.border = C_ACCENT; }
     button(4, 128, 154, 48, p3, dc_p3);
     Btn p6; p6.label = "多點平均"; p6.sub = "比較久"; if (dc_points == 6) { p6.fg = C_ACCENT; p6.border = C_ACCENT; }
     button(162, 128, 154, 48, p6, dc_p6);
     Btn s; s.icon = &qqs_i18_player_play; s.label = "開始"; s.fg = C_ACCENT; s.border = C_ACCENT;
-    s.enabled = qqs_settings.probe_installed && !job_active() && !pj.running;
+    s.enabled = qqs_settings.probe_installed && nozzle_cool() && !job_active() && !pj.running;
     button(4, 182, 312, 54, s, au_start);
   }
   static void go_auto() { ui.goto_screen(au_intro_screen); }
@@ -655,7 +688,7 @@ namespace qqs {
   static void mesh_screen() {
     static millis_t next_ms = 0;
     ui.defer_status_screen();
-    if (probe_poll() && prb_seen && !pj.running) redraw();
+    if ((probe_poll() && prb_seen && !pj.running) | cool_tick()) redraw();
     if (!live(next_ms, 2000)) return;
     touch.clear();
     header("自動網格", go_settings);
@@ -688,7 +721,7 @@ namespace qqs {
 
     const bool en = can_start();
     Btn b; b.icon = &qqs_i18_grid_dots; b.label = "建立網格"; b.enabled = en;
-    if (!en && !pj.running) { b.icon = nullptr; b.sub = qqs_settings.probe_installed ? "先按一下探頭" : "沒有設定探頭"; }
+    if (!en && !pj.running) { b.icon = nullptr; b.sub = !qqs_settings.probe_installed ? "沒有設定探頭" : !nozzle_cool() ? "噴嘴降溫中" : "先按一下探頭"; }
     button(4, 186, 101, 50, b, me_build);
     Btn t; t.icon = &qqs_i18_toggle_right; t.label = planner.leveling_active ? "關閉網格" : "使用網格"; t.enabled = bedlevel.has_mesh() && !job_active();
     button(110, 186, 101, 50, t, me_toggle);
@@ -702,7 +735,20 @@ namespace qqs {
       prb_fresh = true;
       if (ui.currentScreen != probe_screen) prb_seen = false;
     }
+    cool_start();
     ui.goto_screen(mesh_screen);
+  }
+
+  // Temperature::setTargetHotend asks this: no hotend heat while the probe tools are open or a probe job
+  // runs (the probe sits over the nozzle). Heat asked for meanwhile (G-code page, Wi-Fi, M104 / M109) is 0.
+  bool block_hotend() {
+    const screenFunc_t s = ui.currentScreen;
+    const bool on = pj.running || s == probe_screen || s == mesh_screen || s == job_screen
+      || s == ph_intro_screen || s == ph_paper_screen || s == ph_result_screen || s == ph_fail_screen
+      || s == rp_result_screen || s == dc_intro_screen || s == dc_result_screen
+      || s == au_intro_screen || s == au_result_screen;
+    if (on) ui.set_status("自動校準中，噴嘴不加熱");
+    return on;
   }
 
 } // namespace qqs

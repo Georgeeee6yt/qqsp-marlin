@@ -570,6 +570,10 @@ typedef struct { raw_adc_t raw_min, raw_max; celsius_t mintemp, maxtemp; } temp_
   #define HAS_FAN_LOGIC 1
 #endif
 
+#if ENABLED(QQS_UI)
+  namespace qqs { bool block_hotend(); }
+#endif
+
 class Temperature {
 
   public:
@@ -947,8 +951,10 @@ class Temperature {
 
     #if HAS_HOTEND
 
-      static void setTargetHotend(const celsius_t celsius, const uint8_t E_NAME) {
+      static void setTargetHotend(const celsius_t celsius_in, const uint8_t E_NAME) {
         const uint8_t ee = HOTEND_INDEX;
+        // QQS-Pro: no hotend heat while the probe tools are open (qqs_ui_probe.cpp)
+        const celsius_t celsius = (celsius_in > 0 && TERN0(QQS_UI, qqs::block_hotend())) ? 0 : celsius_in;
         #if MILLISECONDS_PREHEAT_TIME > 0
           if (celsius == 0)
             reset_preheat_time(ee);
