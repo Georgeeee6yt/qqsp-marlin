@@ -2,7 +2,7 @@
 
 給 **FLSUN QQ-S Pro**（Delta，HiSpeed 主板，STM32F103VE）用的 Marlin 2.1.2.1 韌體，有全中文觸控介面，原廠的 MKS Wi-Fi 模組也可以照常使用。
 
-目前版本 **v3.2.21**。各版本跟 commit 的對照請看 [`VERSIONS.md`](VERSIONS.md)。
+目前版本 **v3.2.22**。各版本跟 commit 的對照請看 [`VERSIONS.md`](VERSIONS.md)。
 
 > ⚠️ 這是個人改機用的韌體，只在一台機器上用過，而且只出 **BMG 擠出機**版本（E 反向、415 步/mm）。刷之前先用 `M503` 把原本的設定記下來。
 
@@ -18,7 +18,7 @@
   - 切片軟體上傳後直接開印
   - 在印表機上掃描網路、輸入密碼、開熱點
   - 從印表機備份或刷寫 ESP8266 的韌體（不需要 USB 轉序列）
-  - 搭配 [qqsp-mks-wifi](https://github.com/Georgeeee6yt/qqsp-mks-wifi) 的網頁，可以看列印狀態、從網頁選 SD 卡的檔案來印（中文長檔名也行）
+  - 搭配 [qqsp-mks-wifi](https://github.com/Georgeeee6yt/qqsp-mks-wifi) 的網頁，可以看列印狀態、從網頁選 SD 卡的檔案來印（中文長檔名也行），列印中可以暫停、繼續、停止
 - **Smooth Linear Advance**（從上游 Marlin 移植，加上 S 曲線支援），預設 K = 0
 - `M2011` 效能量測（步進中斷、planner 的 CPU 用量）
 - Marlin 原本的選單已經整個拿掉，換成這套介面
