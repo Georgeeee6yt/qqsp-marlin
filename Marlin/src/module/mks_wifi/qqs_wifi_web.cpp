@@ -11,6 +11,9 @@
  *   M2014 H<hex>   start printing a file (hex of its 8.3 path from the root):
  *                    "QQSP <code>"  (only *.G* files; others = 3)  0 started, 1 a job is open, 2 printer busy (moving / not on the home or
  *                    file screens), 3 no such file, 4 no card, 5 bad argument
+ *   M2015 A<1|2|3> pause / resume / stop the SD print, as the printer's own buttons do (v3.2.22):
+ *                    "QQSC <code>"  0 done, 1 no print, 2 already stopping, 3 not paused / already paused,
+ *                    4 nozzle cold (resume), 5 bad argument, 6 printer busy (the UI's G-code slot is in use)
  *
  * While an SD print waits for its temperatures (M109 / M190) Marlin runs only idle(), so nothing reads the
  * module: qqs_wifi_task() reads it then, answers the module's status queries directly and queues the rest.
@@ -29,7 +32,7 @@
 #include "qqs_espflash.h"
 #include "qqs_wifi_web.h"
 
-namespace qqs { bool wifi_can_start(); void wifi_started(); }
+namespace qqs { bool wifi_can_start(); void wifi_started(); uint8_t wifi_ctl(const uint8_t a); }
 
 bool qqs_wifi_idle_ctx = false;
 
@@ -140,6 +143,16 @@ static void print_start(const char *arg) {
   out(b);
 }
 
+// ---- M2015: pause / resume / stop ----
+
+static void ctl(const char *arg) {
+  while (*arg == ' ') arg++;
+  const uint8_t a = (*arg == 'A' || *arg == 'a') ? uint8_t(atoi(arg + 1)) : 0;
+  char b[12];
+  sprintf_P(b, PSTR("QQSC %u\n"), qqs::wifi_ctl(a));
+  out(b);
+}
+
 // ---- dispatch ----
 
 static bool is(const char *line, PGM_P cmd) {
@@ -151,6 +164,7 @@ bool qqs_wifi_direct(const char *line) {
   if (is(line, PSTR("M2012"))) { mks_m2012(); return true; }
   if (is(line, PSTR("M2013"))) { list_start(line + 5); return true; }
   if (is(line, PSTR("M2014"))) { print_start(line + 5); return true; }
+  if (is(line, PSTR("M2015"))) { ctl(line + 5); return true; }
   if (qqs_wifi_idle_ctx) {   // the module's own status queries, while the queue is stuck in a heat wait
     if (is(line, PSTR("M997"))) { mks_m997(); return true; }
     if (is(line, PSTR("M991"))) { mks_m991(); return true; }

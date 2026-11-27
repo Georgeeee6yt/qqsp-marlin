@@ -1033,6 +1033,25 @@ namespace qqs {
     redraw();
   }
 
+  // Pause / resume / stop from the Wi-Fi module's web page (M2015, qqs_wifi_web.cpp): the same actions as
+  // the buttons above, refused the same way. 1 pause, 2 resume, 3 stop. Returns the QQSC code.
+  uint8_t wifi_ctl(const uint8_t a) {
+    if (a < 1 || a > 3) return 5;
+    if (stopping) return 2;
+    if (a == 3) {
+      if (!(printingIsActive() || printingIsPaused() || card.isFileOpen())) return 1;
+      stop_confirm();
+      return 0;
+    }
+    if (!card.isFileOpen()) return 1;
+    if ((a == 1) == printingIsPaused()) return 3;
+    if (a == 2 && thermalManager.degTargetHotend(0) < EXTRUDE_MINTEMP) return 4;
+    if (!run(a == 1 ? "M2000" : "M2001")) return 6;
+    ui.set_status(a == 1 ? "停靠中…" : "回到原位…");
+    redraw();
+    return 0;
+  }
+
   // =========================================================================
   // Printing animation: she paints a flower along a toolpath as the print progresses
   // (assets from qqs_tools/gen_anim.py; drawn on the status screen and ticked from tft_idle)
