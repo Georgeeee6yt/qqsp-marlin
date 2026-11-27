@@ -164,7 +164,24 @@ uint32_t SD_transfer(uint8_t *buf, uint32_t blk, uint32_t cnt, uint32_t dir){
 };
 
 
+// QQS-Pro (v3.2.21): wait until the card has finished programming the last block (back in TRAN state and
+// ready for data). SD_transfer returns at DATAEND while the card is still busy (PRG); the CMD0 below or a
+// re-init by Marlin right after that dropped the last write -- George 2026-11-27: after an ESP flash the
+// renamed file had both names (FatFs wrote the new entry, the removal of the old one was lost), and the
+// entry left over after deleting one of them pointed at freed clusters. 0 = ready, 1 = timeout.
+uint8_t SD_wait_ready(const uint32_t ms) {
+	const uint32_t t0 = millis();
+	do {
+		if (SD_Cmd(SD_CMD13, SDCard.RCA, SDIO_RESP_SHORT, (uint32_t*)response) == 0) {
+			SD_check_status((SD_Status_TypeDef*)&SDStatus, (uint32_t*)&response[0]);
+			if (SDStatus.current_state == 4 && SDStatus.ready_for_data) return 0;
+		}
+	} while (millis() - t0 < ms);
+	return 1;
+}
+
 void sd_reset(void){
+	(void)SD_wait_ready(1000);   // QQS-Pro: never reset a card that is still writing
 	(void)SD_Cmd(SD_CMD0,0x00,SDIO_RESP_NONE,(uint32_t*)response);  //NORESP
 	DMA2_Channel4->CCR = 0;
 	DMA2_Channel4->CMAR = 0;

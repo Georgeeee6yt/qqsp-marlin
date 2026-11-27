@@ -171,8 +171,12 @@ DRESULT disk_ioctl (
 	switch (cmd)
   {
 
-	case CTRL_SYNC:
-      res = RES_OK;
+	case CTRL_SYNC:   // QQS-Pro: f_sync / f_close / f_rename end here; make sure the card really has the data
+      #ifdef STM32F1
+        res = SD_wait_ready(1000) ? RES_ERROR : RES_OK;
+      #else
+        res = RES_OK;
+      #endif
       break;
  
     case GET_SECTOR_SIZE:
