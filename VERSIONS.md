@@ -4,6 +4,7 @@
 
 | 版本 | commit | 說明 |
 |---|---|---|
+| v3.2.21 | [`c99d5d4`](https://github.com/Georgeeee6yt/qqsp-marlin/commit/c99d5d4b45a458c34d8828650fb7730e96f8fa4a) | v3.2.21: wait for the SD card to finish writing before FatFs sync returns and before the card is reset |
 | v3.2.20 | [`344defb`](https://github.com/Georgeeee6yt/qqsp-marlin/commit/344defbaa90cc99ca47a6f9cc22e921758b42478) | v3.2.20: Wi-Fi upload gives the heaters back on every exit; kill screen shows the temperatures |
 | v3.2.19 | [`7747c1b`](https://github.com/Georgeeee6yt/qqsp-marlin/commit/7747c1b2b7d999e89481943f263d307c64079887) | v3.2.19: ESP flashing sends a block again when it arrived damaged |
 | v3.2.18 | [`f5f477c`](https://github.com/Georgeeee6yt/qqsp-marlin/commit/f5f477cc431d72daf0720f48134b9a01779931f2) | v3.2.18: probe gate before every probe job |
@@ -74,5 +75,6 @@ git tag v3.2.17 d18e74acd0c6fb2e29bfcee359ebf01bd47d546e
 git tag v3.2.18 f5f477cc431d72daf0720f48134b9a01779931f2
 git tag v3.2.19 7747c1b2b7d999e89481943f263d307c64079887
 git tag v3.2.20 344defbaa90cc99ca47a6f9cc22e921758b42478
+git tag v3.2.21 c99d5d4b45a458c34d8828650fb7730e96f8fa4a
 git push origin --tags
 ```
